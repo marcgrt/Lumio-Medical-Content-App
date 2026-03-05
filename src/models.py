@@ -12,6 +12,8 @@ from src.config import DB_PATH
 class Source(SQLModel, table=True):
     """A data source (journal feed, API, etc.)."""
 
+    __table_args__ = {"extend_existing": True}
+
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(index=True)
     type: str  # "rss", "api", "scraper"
@@ -22,6 +24,8 @@ class Source(SQLModel, table=True):
 
 class Article(SQLModel, table=True):
     """A single medical article / news item."""
+
+    __table_args__ = {"extend_existing": True}
 
     id: Optional[int] = Field(default=None, primary_key=True)
     title: str

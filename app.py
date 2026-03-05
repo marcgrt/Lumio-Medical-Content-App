@@ -248,10 +248,28 @@ with st.sidebar:
 
 
 # ---------------------------------------------------------------------------
+# Breaking Alerts Banner
+# ---------------------------------------------------------------------------
+alert_articles = get_articles(status_filter="ALERT")
+if alert_articles:
+    st.markdown(
+        f"""<div style="background:#fef2f2;border:2px solid #ef4444;
+        border-radius:8px;padding:12px 16px;margin-bottom:16px">
+        <strong style="color:#ef4444">🚨 {len(alert_articles)} Breaking Alert(s)</strong>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+    for alert in alert_articles[:3]:
+        st.markdown(
+            f"- 🚨 **[{alert.title}]({alert.url})** "
+            f"({alert.journal or alert.source})"
+        )
+
+# ---------------------------------------------------------------------------
 # Main area — Tabs
 # ---------------------------------------------------------------------------
-tab_briefing, tab_search, tab_stats = st.tabs(
-    ["📋 Tages-Briefing", "🔍 Suche", "📊 Statistik"]
+tab_briefing, tab_search, tab_stats, tab_digest = st.tabs(
+    ["📋 Tages-Briefing", "🔍 Suche", "📊 Statistik", "📧 Digest-Preview"]
 )
 
 # ---- Tab: Briefing --------------------------------------------------------
@@ -440,3 +458,39 @@ with tab_stats:
             st.info("Noch keine freigegebenen Artikel zum Exportieren.")
     else:
         st.info("Noch keine Daten vorhanden. Führe zuerst die Pipeline aus.")
+
+
+# ---- Tab: Digest Preview --------------------------------------------------
+with tab_digest:
+    st.header("E-Mail-Digest Preview")
+    st.caption(
+        "Vorschau des täglichen E-Mail-Briefings (Top 10 nach Relevanz-Score)"
+    )
+
+    from src.digest import get_top_articles, _build_html
+
+    digest_articles = get_top_articles(10)
+    if digest_articles:
+        html = _build_html(digest_articles, date.today())
+        st.components.v1.html(html, height=800, scrolling=True)
+
+        # Manual pipeline run
+        st.divider()
+        st.subheader("Pipeline manuell starten")
+        col_run1, col_run2 = st.columns([1, 3])
+        with col_run1:
+            days = st.number_input("Tage zurück", min_value=1, max_value=30, value=2)
+        with col_run2:
+            if st.button("🔄 Pipeline jetzt ausführen"):
+                with st.spinner("Pipeline läuft..."):
+                    import asyncio
+                    from src.pipeline import run_pipeline
+                    stats = asyncio.run(run_pipeline(days_back=days))
+                    st.success(
+                        f"Pipeline fertig! {stats.get('ingested', 0)} Artikel "
+                        f"→ {stats.get('stored', 0)} neu gespeichert "
+                        f"({stats.get('elapsed_seconds', 0)}s)"
+                    )
+                    st.rerun()
+    else:
+        st.info("Noch keine Artikel vorhanden.")
