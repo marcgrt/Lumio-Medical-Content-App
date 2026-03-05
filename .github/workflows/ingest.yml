@@ -1,0 +1,41 @@
+name: MedIntel Daily Ingestion
+
+on:
+  schedule:
+    # 5:00 UTC = 7:00 MEZ (Winter) / 7:00 MESZ (Sommer)
+    - cron: "0 5 * * *"
+  workflow_dispatch:  # Manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run ingestion pipeline
+        run: python -m src 2
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Commit updated database
+        run: |
+          git config user.name "MedIntel Bot"
+          git config user.email "medintel-bot@users.noreply.github.com"
+          git add db/medintel.db
+          git diff --cached --quiet || git commit -m "chore: daily ingestion $(date -u +%Y-%m-%d)"
+          git push
