@@ -29,6 +29,18 @@ _SPEC_COLORS: dict[str, str] = {
     "Infektiologie": "#facc15",
     "Psychiatrie": "#8b5cf6",
     "Health Economics": "#94a3b8",
+    "Orthopädie": "#78716c",
+    "Anästhesiologie": "#e879f9",
+    "Intensivmedizin": "#f43f5e",
+    "Nephrologie": "#0ea5e9",
+    "HNO": "#d946ef",
+    "Augenheilkunde": "#2dd4bf",
+    "Geriatrie": "#a3a3a3",
+    "Ernährungsmedizin": "#65a30d",
+    "Palliativmedizin": "#c084fc",
+    "Allergologie": "#fbbf24",
+    "Nuklearmedizin": "#818cf8",
+    "Notfallmedizin": "#fb7185",
 }
 
 
