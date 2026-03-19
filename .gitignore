@@ -3,8 +3,16 @@ __pycache__/
 .env
 .venv/
 venv/
-db/medintel.db
+db/lumio.db
+db/lumio.db-wal
+db/lumio.db-shm
+lumio.db
 .streamlit/secrets.toml
+nginx/.htpasswd
+db/llm_cache/
+db/backups/
+db/logs/
+db/pakete/
 *.egg-info/
 dist/
 build/

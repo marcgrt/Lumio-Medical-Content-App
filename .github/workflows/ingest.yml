@@ -1,13 +1,10 @@
-name: MedIntel Daily Ingestion
+name: Lumio Daily Ingestion
 
 on:
   schedule:
     # 5:00 UTC = 7:00 MEZ (Winter) / 7:00 MESZ (Sommer)
     - cron: "0 5 * * *"
   workflow_dispatch:  # Manual trigger
-
-permissions:
-  contents: write
 
 jobs:
   ingest:
@@ -27,15 +24,22 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Download previous DB artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: lumio-db-latest
+          path: db/
+        continue-on-error: true  # First run won't have an artifact yet
+
       - name: Run ingestion pipeline
         run: python -m src 2
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
-      - name: Commit updated database
-        run: |
-          git config user.name "MedIntel Bot"
-          git config user.email "medintel-bot@users.noreply.github.com"
-          git add db/medintel.db
-          git diff --cached --quiet || git commit -m "chore: daily ingestion $(date -u +%Y-%m-%d)"
-          git push
+      - name: Upload DB as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumio-db-latest
+          path: db/lumio.db
+          retention-days: 30
+          overwrite: true

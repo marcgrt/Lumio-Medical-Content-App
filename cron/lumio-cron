@@ -1,0 +1,15 @@
+# Lumio Cron Jobs — runs inside the pipeline container
+# Times are container-local (set TZ in .env if needed)
+
+# --- Daily Pipeline at 04:00 ---
+# 1. Backup DB  2. Run pipeline  3. Rotate logs (keep last 7 days)
+0 4 * * *  root  . /app/.env.cron && cd /app && cp db/lumio.db db/backup-$(date +\%Y\%m\%d).db && python -m src 1 >> /var/log/lumio-pipeline.log 2>&1 && find db/ -name 'backup-*.db' -mtime +7 -delete
+
+# --- Daily Digest at 06:30 ---
+30 6 * * *  root  . /app/.env.cron && cd /app && python -m src.digest $DIGEST_EMAIL >> /var/log/lumio-digest.log 2>&1
+
+# --- Log Rotation at 03:00 (before pipeline) ---
+# Keep last 500KB per log, archive old as .1
+0 3 * * *  root  cd /var/log && for f in lumio-pipeline.log lumio-digest.log; do [ -f "$f" ] && [ $(stat -c\%s "$f" 2>/dev/null || stat -f\%z "$f" 2>/dev/null) -gt 512000 ] && mv "$f" "${f}.1"; done
+
+# Empty line required by cron

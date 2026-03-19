@@ -13,6 +13,19 @@ from src.models import Article
 
 logger = logging.getLogger(__name__)
 
+_GERMAN_SOURCE_FRAGMENTS = [
+    "ärzteblatt", "aerzteblatt",
+    "ärzte zeitung", "aerztezeitung",
+    "pharmazeutische zeitung",
+    "apotheke adhoc",
+]
+
+
+def _detect_language(source_name: str) -> str:
+    """Detect language from source name — German medical sources → 'de'."""
+    name_lower = source_name.lower()
+    return "de" if any(s in name_lower for s in _GERMAN_SOURCE_FRAGMENTS) else "en"
+
 
 def _parse_pub_date(entry: dict) -> Optional[date]:
     """Try to extract a publication date from a feed entry."""
@@ -82,7 +95,7 @@ async def fetch_rss_feeds(client: httpx.AsyncClient) -> list[Article]:
                         a.get("name", "") for a in entry.get("authors", [])
                     ) or None,
                     doi=doi,
-                    language="de" if "ärzteblatt" in source_name.lower() else "en",
+                    language=_detect_language(source_name),
                 )
             )
             count += 1

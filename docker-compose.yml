@@ -1,0 +1,51 @@
+version: "3.9"
+
+services:
+  # ---------- Streamlit App + API ----------
+  lumio:
+    build: .
+    container_name: lumio-app
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./db:/app/db            # SQLite persistent storage
+      - model-cache:/root/.cache # sentence-transformers cache
+    expose:
+      - "8501"
+      - "8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+  # ---------- Nginx Reverse Proxy ----------
+  nginx:
+    image: nginx:alpine
+    container_name: lumio-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/.htpasswd:/etc/nginx/.htpasswd:ro
+      - certbot-conf:/etc/letsencrypt:ro
+      - certbot-www:/var/www/certbot:ro
+    depends_on:
+      - lumio
+
+  # ---------- Let's Encrypt Certbot ----------
+  certbot:
+    image: certbot/certbot
+    container_name: lumio-certbot
+    volumes:
+      - certbot-conf:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+    # Renew every 12h (certbot skips if not due)
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+
+volumes:
+  model-cache:
+  certbot-conf:
+  certbot-www:
