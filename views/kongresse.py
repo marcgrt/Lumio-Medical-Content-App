@@ -1,4 +1,4 @@
-"""Lumio — Kongressplan Tab: Alle wichtigen Aerztekongresse auf einen Blick."""
+"""Lumio — Kongressplan Tab: Alle wichtigen Ärztekongresse auf einen Blick."""
 from __future__ import annotations
 
 from datetime import date, timedelta
@@ -6,7 +6,7 @@ from datetime import date, timedelta
 import streamlit as st
 
 _MONTH_NAMES_DE = {
-    1: "Januar", 2: "Februar", 3: "Maerz", 4: "April",
+    1: "Januar", 2: "Februar", 3: "März", 4: "April",
     5: "Mai", 6: "Juni", 7: "Juli", 8: "August",
     9: "September", 10: "Oktober", 11: "November", 12: "Dezember",
 }
@@ -22,9 +22,9 @@ _SPEC_COLORS: dict[str, str] = {
     "Allgemeinmedizin": "#84cc16",
     "Radiologie": "#6366f1",
     "Urologie": "#14b8a6",
-    "Gynaekologie": "#f472b6",
+    "Gynäkologie": "#f472b6",
     "Dermatologie": "#fb923c",
-    "Paediatrie": "#38bdf8",
+    "Pädiatrie": "#38bdf8",
     "Chirurgie": "#64748b",
     "Infektiologie": "#facc15",
     "Psychiatrie": "#8b5cf6",
@@ -89,7 +89,7 @@ def _render_hero_countdown(congress: dict):
 
     if status == "running":
         countdown_html = '<span style="color:#4ade80;font-size:2.4rem;font-weight:800">LIVE</span>'
-        countdown_label = "Kongress laeuft gerade!"
+        countdown_label = "Kongress läuft gerade!"
     elif days == 0:
         countdown_html = '<span style="color:#fbbf24;font-size:2.4rem;font-weight:800">HEUTE</span>'
         countdown_label = "Startet heute!"
@@ -148,7 +148,7 @@ def _render_hero_countdown(congress: dict):
         f'<div class="kongress-hero-body">'
         f'<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:16px">'
         f'<div style="flex:1;min-width:200px">'
-        f'<div style="font-size:0.65rem;font-weight:700;color:{sc};text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Naechster Kongress</div>'
+        f'<div style="font-size:0.65rem;font-weight:700;color:{sc};text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Nächster Kongress</div>'
         f'<div style="font-size:1.2rem;font-weight:700;color:var(--c-text);letter-spacing:-0.02em;line-height:1.3;margin-bottom:8px">{name_esc}</div>'
         f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">'
         f'<span style="font-size:0.78rem;color:var(--c-text-secondary)">{congress["date_start"]} &mdash; {congress["date_end"]}</span>'
@@ -353,7 +353,7 @@ def render_kongresse():
         unsafe_allow_html=True,
     )
     st.markdown(
-        '<div class="page-sub">Alle wichtigen Aerztekongresse auf einen Blick — Termine, CME, Deadlines</div>',
+        '<div class="page-sub">Alle wichtigen Ärztekongresse auf einen Blick — Termine, CME, Deadlines</div>',
         unsafe_allow_html=True,
     )
 
@@ -408,7 +408,7 @@ def render_kongresse():
 
     # ---- Filters ----
     st.markdown(
-        '<div class="section-divider"><span class="section-divider-label">Filter & Uebersicht</span></div>',
+        '<div class="section-divider"><span class="section-divider-label">Filter & Übersicht</span></div>',
         unsafe_allow_html=True,
     )
 
@@ -432,7 +432,7 @@ def render_kongresse():
             "Land",
             options=countries,
             default=[],
-            placeholder="Alle Laender",
+            placeholder="Alle Länder",
             key="kongress_filter_country",
         )
     with col_f3:

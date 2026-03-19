@@ -15,8 +15,14 @@
     "estimated_attendees": 10000,
     "abstract_deadline": null,
     "registration_deadline": "2025-12-01",
-    "description_de": "Weltweit groesste Healthcare-Investorenkonferenz. Wichtig fuer Pharma-Trends und Branchenstrategie.",
-    "keywords": ["healthcare", "investment", "pharma", "biotech", "strategie"]
+    "description_de": "Weltweit größte Healthcare-Investorenkonferenz. Wichtig für Pharma-Trends und Branchenstrategie.",
+    "keywords": [
+      "healthcare",
+      "investment",
+      "pharma",
+      "biotech",
+      "strategie"
+    ]
   },
   {
     "id": "asco-gi-2026",
@@ -34,8 +40,15 @@
     "estimated_attendees": 4500,
     "abstract_deadline": "2025-10-15",
     "registration_deadline": "2026-01-10",
-    "description_de": "Fuehrendes Symposium fuer gastrointestinale Tumore mit Spaetbrecher-Abstracts und praxisaendernden Studiendaten.",
-    "keywords": ["gi", "gastrointestinal", "cancer", "onkologie", "kolorektal", "pankreas"]
+    "description_de": "Führendes Symposium für gastrointestinale Tumore mit Spätbrecher-Abstracts und praxisändernden Studiendaten.",
+    "keywords": [
+      "gi",
+      "gastrointestinal",
+      "cancer",
+      "onkologie",
+      "kolorektal",
+      "pankreas"
+    ]
   },
   {
     "id": "attd-2026",
@@ -53,8 +66,15 @@
     "estimated_attendees": 5000,
     "abstract_deadline": "2025-11-01",
     "registration_deadline": "2026-02-01",
-    "description_de": "Top-Kongress fuer Diabetes-Technologie: CGM, Insulinpumpen, Closed-Loop-Systeme und digitale Therapien.",
-    "keywords": ["diabetes", "technologie", "cgm", "insulin", "closed-loop", "digital"]
+    "description_de": "Top-Kongress für Diabetes-Technologie: CGM, Insulinpumpen, Closed-Loop-Systeme und digitale Therapien.",
+    "keywords": [
+      "diabetes",
+      "technologie",
+      "cgm",
+      "insulin",
+      "closed-loop",
+      "digital"
+    ]
   },
   {
     "id": "acc-2026",
@@ -73,11 +93,18 @@
     "abstract_deadline": "2025-11-15",
     "registration_deadline": "2026-03-15",
     "description_de": "Einer der weltweit wichtigsten Kardiologie-Kongresse. Late-Breaking Trials zu Herzinsuffizienz, KHK, Rhythmologie.",
-    "keywords": ["kardiologie", "herz", "herzinsuffizienz", "khk", "arrhythmie", "kardiovaskulaer"]
+    "keywords": [
+      "kardiologie",
+      "herz",
+      "herzinsuffizienz",
+      "khk",
+      "arrhythmie",
+      "kardiovaskulär"
+    ]
   },
   {
     "id": "dgk-2026",
-    "name": "DGK — Jahrestagung Deutsche Gesellschaft fuer Kardiologie",
+    "name": "DGK — Jahrestagung Deutsche Gesellschaft für Kardiologie",
     "short": "DGK",
     "date_start": "2026-04-15",
     "date_end": "2026-04-18",
@@ -91,12 +118,18 @@
     "estimated_attendees": 8500,
     "abstract_deadline": "2026-01-15",
     "registration_deadline": "2026-04-01",
-    "description_de": "Groesster deutscher Kardiologie-Kongress. Leitlinien-Updates, Versorgungsforschung, Hot Lines.",
-    "keywords": ["kardiologie", "dgk", "herz", "leitlinien", "deutschland"]
+    "description_de": "Größter deutscher Kardiologie-Kongress. Leitlinien-Updates, Versorgungsforschung, Hot Lines.",
+    "keywords": [
+      "kardiologie",
+      "dgk",
+      "herz",
+      "leitlinien",
+      "deutschland"
+    ]
   },
   {
     "id": "dgim-2026",
-    "name": "DGIM — Kongress Deutsche Gesellschaft fuer Innere Medizin",
+    "name": "DGIM — Kongress Deutsche Gesellschaft für Innere Medizin",
     "short": "DGIM",
     "date_start": "2026-04-25",
     "date_end": "2026-04-28",
@@ -111,7 +144,13 @@
     "abstract_deadline": "2026-01-31",
     "registration_deadline": "2026-04-10",
     "description_de": "Zentraler Internisten-Kongress Deutschlands. Alle Subdisziplinen, Update-Seminare, Praxistipps.",
-    "keywords": ["innere medizin", "dgim", "internist", "deutschland", "update"]
+    "keywords": [
+      "innere medizin",
+      "dgim",
+      "internist",
+      "deutschland",
+      "update"
+    ]
   },
   {
     "id": "ats-2026",
@@ -129,8 +168,15 @@
     "estimated_attendees": 14000,
     "abstract_deadline": "2026-01-20",
     "registration_deadline": "2026-05-01",
-    "description_de": "Weltkongress fuer Pneumologie und Intensivmedizin. COPD, Asthma, Lungenfibrose, Beatmung.",
-    "keywords": ["pneumologie", "lunge", "copd", "asthma", "beatmung", "intensiv"]
+    "description_de": "Weltkongress für Pneumologie und Intensivmedizin. COPD, Asthma, Lungenfibrose, Beatmung.",
+    "keywords": [
+      "pneumologie",
+      "lunge",
+      "copd",
+      "asthma",
+      "beatmung",
+      "intensiv"
+    ]
   },
   {
     "id": "asco-2026",
@@ -148,8 +194,15 @@
     "estimated_attendees": 42000,
     "abstract_deadline": "2026-02-12",
     "registration_deadline": "2026-05-15",
-    "description_de": "Weltweit groesster und wichtigster Onkologie-Kongress. Praxisaendernde Phase-III-Daten, Immuntherapie, Praezisionsmedizin.",
-    "keywords": ["onkologie", "krebs", "asco", "immuntherapie", "checkpoint", "praezisionsmedizin"]
+    "description_de": "Weltweit größter und wichtigster Onkologie-Kongress. Praxisändernde Phase-III-Daten, Immuntherapie, Präzisionsmedizin.",
+    "keywords": [
+      "onkologie",
+      "krebs",
+      "asco",
+      "immuntherapie",
+      "checkpoint",
+      "Präzisionsmedizin"
+    ]
   },
   {
     "id": "eha-2026",
@@ -167,8 +220,15 @@
     "estimated_attendees": 12000,
     "abstract_deadline": "2026-02-15",
     "registration_deadline": "2026-05-20",
-    "description_de": "Europas fuehrender Haematologie-Kongress. Leukaemie, Lymphom, Myelom, CAR-T, Gentherapie.",
-    "keywords": ["haematologie", "leukaemie", "lymphom", "myelom", "car-t", "gentherapie"]
+    "description_de": "Europas führender Hämatologie-Kongress. Leukämie, Lymphom, Myelom, CAR-T, Gentherapie.",
+    "keywords": [
+      "Hämatologie",
+      "Leukämie",
+      "lymphom",
+      "myelom",
+      "car-t",
+      "gentherapie"
+    ]
   },
   {
     "id": "eular-2026",
@@ -177,7 +237,7 @@
     "date_start": "2026-06-03",
     "date_end": "2026-06-06",
     "city": "Kopenhagen",
-    "country": "Daenemark",
+    "country": "Dänemark",
     "venue": "Bella Center",
     "website": "https://congress.eular.org",
     "specialty": "Rheumatologie",
@@ -186,8 +246,14 @@
     "estimated_attendees": 14000,
     "abstract_deadline": "2026-02-01",
     "registration_deadline": "2026-05-15",
-    "description_de": "Wichtigster europaeischer Rheuma-Kongress. Autoimmunerkrankungen, Biologika, neue Targets.",
-    "keywords": ["rheuma", "rheumatologie", "autoimmun", "biologika", "arthritis"]
+    "description_de": "Wichtigster europäischer Rheuma-Kongress. Autoimmunerkrankungen, Biologika, neue Targets.",
+    "keywords": [
+      "rheuma",
+      "rheumatologie",
+      "autoimmun",
+      "biologika",
+      "arthritis"
+    ]
   },
   {
     "id": "ada-2026",
@@ -205,12 +271,18 @@
     "estimated_attendees": 15000,
     "abstract_deadline": "2026-02-20",
     "registration_deadline": "2026-06-01",
-    "description_de": "Groesster Diabetes-Kongress weltweit. GLP-1, SGLT2, Typ-1-Innovationen, Praevention.",
-    "keywords": ["diabetes", "glp-1", "sglt2", "insulin", "praevention"]
+    "description_de": "Größter Diabetes-Kongress weltweit. GLP-1, SGLT2, Typ-1-Innovationen, Prävention.",
+    "keywords": [
+      "diabetes",
+      "glp-1",
+      "sglt2",
+      "insulin",
+      "Prävention"
+    ]
   },
   {
     "id": "dgnr-2026",
-    "name": "DGN — Deutsche Gesellschaft fuer Neurologie Kongress",
+    "name": "DGN — Deutsche Gesellschaft für Neurologie Kongress",
     "short": "DGN",
     "date_start": "2026-09-30",
     "date_end": "2026-10-03",
@@ -224,8 +296,15 @@
     "estimated_attendees": 7000,
     "abstract_deadline": "2026-06-15",
     "registration_deadline": "2026-09-15",
-    "description_de": "Groesster deutscher Neurologie-Kongress. MS, Parkinson, Schlaganfall, Epilepsie, Demenz.",
-    "keywords": ["neurologie", "dgn", "ms", "parkinson", "schlaganfall", "demenz"]
+    "description_de": "Größter deutscher Neurologie-Kongress. MS, Parkinson, Schlaganfall, Epilepsie, Demenz.",
+    "keywords": [
+      "neurologie",
+      "dgn",
+      "ms",
+      "parkinson",
+      "schlaganfall",
+      "demenz"
+    ]
   },
   {
     "id": "esc-2026",
@@ -243,8 +322,14 @@
     "estimated_attendees": 32000,
     "abstract_deadline": "2026-04-01",
     "registration_deadline": "2026-08-01",
-    "description_de": "Europas groesster Kardiologie-Kongress. Hot Line Sessions, neue Leitlinien, Late-Breaking Science.",
-    "keywords": ["kardiologie", "esc", "herz", "leitlinien", "hot line"]
+    "description_de": "Europas größter Kardiologie-Kongress. Hot Line Sessions, neue Leitlinien, Late-Breaking Science.",
+    "keywords": [
+      "kardiologie",
+      "esc",
+      "herz",
+      "leitlinien",
+      "hot line"
+    ]
   },
   {
     "id": "esmo-2026",
@@ -262,8 +347,14 @@
     "estimated_attendees": 35000,
     "abstract_deadline": "2026-05-15",
     "registration_deadline": "2026-08-15",
-    "description_de": "Europas wichtigster Onkologie-Kongress. Praxisaendernde Late-Breaking Abstracts, neue Standards.",
-    "keywords": ["onkologie", "esmo", "krebs", "immuntherapie", "targeted therapy"]
+    "description_de": "Europas wichtigster Onkologie-Kongress. Praxisändernde Late-Breaking Abstracts, neue Standards.",
+    "keywords": [
+      "onkologie",
+      "esmo",
+      "krebs",
+      "immuntherapie",
+      "targeted therapy"
+    ]
   },
   {
     "id": "easd-2026",
@@ -281,18 +372,24 @@
     "estimated_attendees": 13000,
     "abstract_deadline": "2026-04-30",
     "registration_deadline": "2026-08-01",
-    "description_de": "Europas fuehrender Diabetes-Kongress. Neue Endpunktdaten, Technologie, Ernaehrung, Praevention.",
-    "keywords": ["diabetes", "easd", "endokrinologie", "glp-1", "praevention"]
+    "description_de": "Europas führender Diabetes-Kongress. Neue Endpunktdaten, Technologie, Ernährung, Prävention.",
+    "keywords": [
+      "diabetes",
+      "easd",
+      "endokrinologie",
+      "glp-1",
+      "Prävention"
+    ]
   },
   {
     "id": "dgp-2026",
-    "name": "DGP — Kongress Deutsche Gesellschaft fuer Pneumologie",
+    "name": "DGP — Kongress Deutsche Gesellschaft für Pneumologie",
     "short": "DGP",
     "date_start": "2026-03-25",
     "date_end": "2026-03-28",
-    "city": "Duesseldorf",
+    "city": "Düsseldorf",
     "country": "Deutschland",
-    "venue": "CCD Duesseldorf",
+    "venue": "CCD Düsseldorf",
     "website": "https://pneumologie.de/kongress",
     "specialty": "Pneumologie",
     "type": "national",
@@ -301,7 +398,14 @@
     "abstract_deadline": "2025-12-15",
     "registration_deadline": "2026-03-10",
     "description_de": "Zentraler deutscher Pneumologie-Kongress. COPD, Asthma, Lungenkrebs-Screening, Schlafmedizin.",
-    "keywords": ["pneumologie", "dgp", "copd", "asthma", "lunge", "schlafmedizin"]
+    "keywords": [
+      "pneumologie",
+      "dgp",
+      "copd",
+      "asthma",
+      "lunge",
+      "schlafmedizin"
+    ]
   },
   {
     "id": "ueg-2026",
@@ -310,7 +414,7 @@
     "date_start": "2026-10-17",
     "date_end": "2026-10-20",
     "city": "Wien",
-    "country": "Oesterreich",
+    "country": "Österreich",
     "venue": "Messe Wien",
     "website": "https://ueg.eu/week",
     "specialty": "Gastroenterologie",
@@ -319,12 +423,19 @@
     "estimated_attendees": 10000,
     "abstract_deadline": "2026-06-01",
     "registration_deadline": "2026-09-15",
-    "description_de": "Europas groesster Gastroenterologie-Kongress. CED, Lebererkrankungen, GI-Onkologie, Endoskopie.",
-    "keywords": ["gastroenterologie", "ced", "crohn", "colitis", "leber", "endoskopie"]
+    "description_de": "Europas größter Gastroenterologie-Kongress. CED, Lebererkrankungen, GI-Onkologie, Endoskopie.",
+    "keywords": [
+      "gastroenterologie",
+      "ced",
+      "crohn",
+      "colitis",
+      "leber",
+      "endoskopie"
+    ]
   },
   {
     "id": "dgho-2026",
-    "name": "DGHO — Jahrestagung Deutsche Gesellschaft fuer Haematologie und Onkologie",
+    "name": "DGHO — Jahrestagung Deutsche Gesellschaft für Hämatologie und Onkologie",
     "short": "DGHO",
     "date_start": "2026-10-09",
     "date_end": "2026-10-12",
@@ -338,8 +449,14 @@
     "estimated_attendees": 6000,
     "abstract_deadline": "2026-07-01",
     "registration_deadline": "2026-09-30",
-    "description_de": "Wichtigster deutscher Onkologie/Haematologie-Kongress. Versorgungsrealitaet, neue Therapien, Leitlinien.",
-    "keywords": ["onkologie", "haematologie", "dgho", "deutschland", "leitlinien"]
+    "description_de": "Wichtigster deutscher Onkologie/Hämatologie-Kongress. Versorgungsrealität, neue Therapien, Leitlinien.",
+    "keywords": [
+      "onkologie",
+      "Hämatologie",
+      "dgho",
+      "deutschland",
+      "leitlinien"
+    ]
   },
   {
     "id": "acr-2026",
@@ -357,8 +474,15 @@
     "estimated_attendees": 14000,
     "abstract_deadline": "2026-06-15",
     "registration_deadline": "2026-10-15",
-    "description_de": "Groesster Rheumatologie-Kongress weltweit. Neue Biologika, JAK-Inhibitoren, Lupus, Vaskulitis.",
-    "keywords": ["rheumatologie", "acr", "autoimmun", "biologika", "jak", "lupus"]
+    "description_de": "Größter Rheumatologie-Kongress weltweit. Neue Biologika, JAK-Inhibitoren, Lupus, Vaskulitis.",
+    "keywords": [
+      "rheumatologie",
+      "acr",
+      "autoimmun",
+      "biologika",
+      "jak",
+      "lupus"
+    ]
   },
   {
     "id": "aha-2026",
@@ -376,8 +500,14 @@
     "estimated_attendees": 16000,
     "abstract_deadline": "2026-06-01",
     "registration_deadline": "2026-10-15",
-    "description_de": "Top-Kardiologie-Kongress. Late-Breaking Clinical Trials, Praevention, Leitlinien-Praemieres.",
-    "keywords": ["kardiologie", "aha", "herz", "praevention", "clinical trials"]
+    "description_de": "Top-Kardiologie-Kongress. Late-Breaking Clinical Trials, Prävention, Leitlinien-Premieren.",
+    "keywords": [
+      "kardiologie",
+      "aha",
+      "herz",
+      "Prävention",
+      "clinical trials"
+    ]
   },
   {
     "id": "aasld-2026",
@@ -395,8 +525,15 @@
     "estimated_attendees": 10000,
     "abstract_deadline": "2026-06-15",
     "registration_deadline": "2026-10-01",
-    "description_de": "Weltweit fuehrender Hepatologie-Kongress. MASLD/NASH, Hepatitis B Cure, Lebertransplantation.",
-    "keywords": ["hepatologie", "leber", "nash", "masld", "hepatitis", "zirrhose"]
+    "description_de": "Weltweit führender Hepatologie-Kongress. MASLD/NASH, Hepatitis B Cure, Lebertransplantation.",
+    "keywords": [
+      "hepatologie",
+      "leber",
+      "nash",
+      "masld",
+      "hepatitis",
+      "zirrhose"
+    ]
   },
   {
     "id": "ash-2026",
@@ -414,8 +551,15 @@
     "estimated_attendees": 30000,
     "abstract_deadline": "2026-08-01",
     "registration_deadline": "2026-11-01",
-    "description_de": "Weltweit groesster Haematologie-Kongress. Bahnbrechende Daten zu CAR-T, bispezifischen Antikoerpern, Gentherapie.",
-    "keywords": ["haematologie", "ash", "car-t", "bispezifisch", "gentherapie", "leukaemie"]
+    "description_de": "Weltweit größter Hämatologie-Kongress. Bahnbrechende Daten zu CAR-T, bispezifischen Antikörpern, Gentherapie.",
+    "keywords": [
+      "Hämatologie",
+      "ash",
+      "car-t",
+      "bispezifisch",
+      "gentherapie",
+      "Leukämie"
+    ]
   },
   {
     "id": "dkk-2026",
@@ -433,8 +577,14 @@
     "estimated_attendees": 10000,
     "abstract_deadline": "2025-11-15",
     "registration_deadline": "2026-02-10",
-    "description_de": "Groesster deutschsprachiger Krebskongress. Interdisziplinaer, Versorgungsforschung, Patientenorientierung.",
-    "keywords": ["onkologie", "krebs", "dkk", "deutschland", "interdisziplinaer"]
+    "description_de": "Größter deutschsprachiger Krebskongress. Interdisziplinär, Versorgungsforschung, Patientenorientierung.",
+    "keywords": [
+      "onkologie",
+      "krebs",
+      "dkk",
+      "deutschland",
+      "interdisziplinär"
+    ]
   },
   {
     "id": "ectrims-2026",
@@ -443,7 +593,7 @@
     "date_start": "2026-10-07",
     "date_end": "2026-10-10",
     "city": "Wien",
-    "country": "Oesterreich",
+    "country": "Österreich",
     "venue": "Messe Wien",
     "website": "https://www.ectrims.eu/congress",
     "specialty": "Neurologie",
@@ -452,12 +602,18 @@
     "estimated_attendees": 9000,
     "abstract_deadline": "2026-06-01",
     "registration_deadline": "2026-09-15",
-    "description_de": "Weltweit fuehrender MS-Kongress. BTK-Inhibitoren, Remyelinisierung, progrediente MS.",
-    "keywords": ["ms", "multiple sklerose", "neurologie", "ectrims", "btk"]
+    "description_de": "Weltweit führender MS-Kongress. BTK-Inhibitoren, Remyelinisierung, progrediente MS.",
+    "keywords": [
+      "ms",
+      "multiple sklerose",
+      "neurologie",
+      "ectrims",
+      "btk"
+    ]
   },
   {
     "id": "dgu-2026",
-    "name": "DGU — Deutsche Gesellschaft fuer Urologie Kongress",
+    "name": "DGU — Deutsche Gesellschaft für Urologie Kongress",
     "short": "DGU",
     "date_start": "2026-09-23",
     "date_end": "2026-09-26",
@@ -471,27 +627,38 @@
     "estimated_attendees": 5000,
     "abstract_deadline": "2026-05-31",
     "registration_deadline": "2026-09-01",
-    "description_de": "Groesster deutscher Urologie-Kongress. Prostatakarzinom, Blasenkrebs, roboterassistierte Chirurgie.",
-    "keywords": ["urologie", "prostata", "blase", "roboter", "chirurgie"]
+    "description_de": "Größter deutscher Urologie-Kongress. Prostatakarzinom, Blasenkrebs, roboterassistierte Chirurgie.",
+    "keywords": [
+      "urologie",
+      "prostata",
+      "blase",
+      "roboter",
+      "chirurgie"
+    ]
   },
   {
     "id": "dggg-2026",
-    "name": "DGGG — Deutsche Gesellschaft fuer Gynaekologie und Geburtshilfe",
+    "name": "DGGG — Deutsche Gesellschaft für Gynäkologie und Geburtshilfe",
     "short": "DGGG",
     "date_start": "2026-10-21",
     "date_end": "2026-10-24",
-    "city": "Muenchen",
+    "city": "München",
     "country": "Deutschland",
-    "venue": "ICM Muenchen",
+    "venue": "ICM München",
     "website": "https://www.dggg.de/kongress",
-    "specialty": "Gynaekologie",
+    "specialty": "Gynäkologie",
     "type": "national",
     "cme_points": 20,
     "estimated_attendees": 4500,
     "abstract_deadline": "2026-06-30",
     "registration_deadline": "2026-10-01",
-    "description_de": "Groesster deutscher Gynaekologie-Kongress. Mammakarzinom, Endometriose, Geburtshilfe-Updates.",
-    "keywords": ["gynaekologie", "mamma", "endometriose", "geburtshilfe"]
+    "description_de": "Größter deutscher Gynäkologie-Kongress. Mammakarzinom, Endometriose, Geburtshilfe-Updates.",
+    "keywords": [
+      "Gynäkologie",
+      "mamma",
+      "endometriose",
+      "geburtshilfe"
+    ]
   },
   {
     "id": "rsna-2026",
@@ -509,8 +676,15 @@
     "estimated_attendees": 50000,
     "abstract_deadline": "2026-06-15",
     "registration_deadline": "2026-11-01",
-    "description_de": "Weltweit groesster Radiologie-Kongress. KI-Diagnostik, neue Bildgebung, Interventionelle Radiologie.",
-    "keywords": ["radiologie", "ki", "bildgebung", "ct", "mrt", "interventionell"]
+    "description_de": "Weltweit größter Radiologie-Kongress. KI-Diagnostik, neue Bildgebung, Interventionelle Radiologie.",
+    "keywords": [
+      "radiologie",
+      "ki",
+      "bildgebung",
+      "ct",
+      "mrt",
+      "interventionell"
+    ]
   },
   {
     "id": "wcc-2026",
@@ -528,8 +702,13 @@
     "estimated_attendees": 5000,
     "abstract_deadline": "2025-12-01",
     "registration_deadline": "2026-02-15",
-    "description_de": "Weltkongress Neurochirurgie. Hirntumore, Wirbelsaeulenchirurgie, minimal-invasive Techniken.",
-    "keywords": ["neurochirurgie", "hirntumor", "wirbelsaeule", "minimal-invasiv"]
+    "description_de": "Weltkongress Neurochirurgie. Hirntumore, Wirbelsäulenchirurgie, minimal-invasive Techniken.",
+    "keywords": [
+      "neurochirurgie",
+      "hirntumor",
+      "Wirbelsäule",
+      "minimal-invasiv"
+    ]
   },
   {
     "id": "ddg-2026",
@@ -547,12 +726,18 @@
     "estimated_attendees": 6000,
     "abstract_deadline": "2026-02-01",
     "registration_deadline": "2026-04-15",
-    "description_de": "Groesster deutscher Diabetes-Kongress. Versorgungsrealitaet, digitale Tools, Praevention.",
-    "keywords": ["diabetes", "ddg", "deutschland", "praevention", "digital"]
+    "description_de": "Größter deutscher Diabetes-Kongress. Versorgungsrealität, digitale Tools, Prävention.",
+    "keywords": [
+      "diabetes",
+      "ddg",
+      "deutschland",
+      "Prävention",
+      "digital"
+    ]
   },
   {
     "id": "degro-2026",
-    "name": "DEGRO — Deutsche Gesellschaft fuer Radioonkologie",
+    "name": "DEGRO — Deutsche Gesellschaft für Radioonkologie",
     "short": "DEGRO",
     "date_start": "2026-06-18",
     "date_end": "2026-06-21",
@@ -567,7 +752,12 @@
     "abstract_deadline": "2026-03-01",
     "registration_deadline": "2026-06-01",
     "description_de": "Wichtiger deutscher Strahlentherapeuten-Kongress. Protonentherapie, Stereotaxie, Kombitherapien.",
-    "keywords": ["radioonkologie", "strahlentherapie", "protonen", "stereotaxie"]
+    "keywords": [
+      "radioonkologie",
+      "strahlentherapie",
+      "protonen",
+      "stereotaxie"
+    ]
   },
   {
     "id": "medica-2026",
@@ -575,9 +765,9 @@
     "short": "MEDICA",
     "date_start": "2026-11-16",
     "date_end": "2026-11-19",
-    "city": "Duesseldorf",
+    "city": "Düsseldorf",
     "country": "Deutschland",
-    "venue": "Messe Duesseldorf",
+    "venue": "Messe Düsseldorf",
     "website": "https://www.medica.de",
     "specialty": "Allgemeinmedizin",
     "type": "international",
@@ -585,8 +775,14 @@
     "estimated_attendees": 81000,
     "abstract_deadline": null,
     "registration_deadline": "2026-11-01",
-    "description_de": "Weltgroesste Medizinmesse. Medizintechnik, Digital Health, Diagnostik, Labortechnik.",
-    "keywords": ["medizintechnik", "digital health", "diagnostik", "labor", "medica"]
+    "description_de": "Weltgrößte Medizinmesse. Medizintechnik, Digital Health, Diagnostik, Labortechnik.",
+    "keywords": [
+      "medizintechnik",
+      "digital health",
+      "diagnostik",
+      "labor",
+      "medica"
+    ]
   },
   {
     "id": "dgvs-2026",
@@ -605,7 +801,13 @@
     "abstract_deadline": "2026-05-15",
     "registration_deadline": "2026-08-30",
     "description_de": "Zentraler deutscher GI-Kongress. CED, Leberzirrhose, GI-Tumore, Endoskopie-Innovationen.",
-    "keywords": ["gastroenterologie", "viszeralmedizin", "ced", "leber", "endoskopie"]
+    "keywords": [
+      "gastroenterologie",
+      "viszeralmedizin",
+      "ced",
+      "leber",
+      "endoskopie"
+    ]
   },
   {
     "id": "ean-2026",
@@ -623,8 +825,14 @@
     "estimated_attendees": 8000,
     "abstract_deadline": "2026-02-15",
     "registration_deadline": "2026-05-30",
-    "description_de": "Europas fuehrender Neurologie-Kongress. Alzheimer, Parkinson, Epilepsie, Kopfschmerz.",
-    "keywords": ["neurologie", "ean", "alzheimer", "parkinson", "epilepsie"]
+    "description_de": "Europas führender Neurologie-Kongress. Alzheimer, Parkinson, Epilepsie, Kopfschmerz.",
+    "keywords": [
+      "neurologie",
+      "ean",
+      "alzheimer",
+      "parkinson",
+      "epilepsie"
+    ]
   },
   {
     "id": "dach-2026",
@@ -633,7 +841,7 @@
     "date_start": "2026-05-20",
     "date_end": "2026-05-23",
     "city": "Salzburg",
-    "country": "Oesterreich",
+    "country": "Österreich",
     "venue": "Salzburg Congress",
     "website": "https://www.dermatologie-kongress.de",
     "specialty": "Dermatologie",
@@ -642,8 +850,14 @@
     "estimated_attendees": 3000,
     "abstract_deadline": "2026-02-28",
     "registration_deadline": "2026-05-01",
-    "description_de": "Deutsch-oesterreich-schweizerischer Dermatologie-Kongress. Psoriasis, Neurodermitis, Melanom.",
-    "keywords": ["dermatologie", "haut", "psoriasis", "neurodermitis", "melanom"]
+    "description_de": "Deutsch-österreich-schweizerischer Dermatologie-Kongress. Psoriasis, Neurodermitis, Melanom.",
+    "keywords": [
+      "dermatologie",
+      "haut",
+      "psoriasis",
+      "neurodermitis",
+      "melanom"
+    ]
   },
   {
     "id": "ers-2026",
@@ -651,9 +865,9 @@
     "short": "ERS",
     "date_start": "2026-09-05",
     "date_end": "2026-09-09",
-    "city": "Muenchen",
+    "city": "München",
     "country": "Deutschland",
-    "venue": "ICM Muenchen",
+    "venue": "ICM München",
     "website": "https://www.ersnet.org/congress",
     "specialty": "Pneumologie",
     "type": "international",
@@ -661,8 +875,15 @@
     "estimated_attendees": 22000,
     "abstract_deadline": "2026-04-15",
     "registration_deadline": "2026-08-01",
-    "description_de": "Europas groesster Pneumologie-Kongress. Late-Breaking Abstracts, neue Therapien, Schlafmedizin.",
-    "keywords": ["pneumologie", "ers", "lunge", "copd", "asthma", "schlaf"]
+    "description_de": "Europas größter Pneumologie-Kongress. Late-Breaking Abstracts, neue Therapien, Schlafmedizin.",
+    "keywords": [
+      "pneumologie",
+      "ers",
+      "lunge",
+      "copd",
+      "asthma",
+      "schlaf"
+    ]
   },
   {
     "id": "wkc-2026",
@@ -680,12 +901,17 @@
     "estimated_attendees": 5000,
     "abstract_deadline": "2026-03-15",
     "registration_deadline": "2026-06-15",
-    "description_de": "Weltkongress Kardiologie mit Fokus auf globale Herzgesundheit und Praevention.",
-    "keywords": ["kardiologie", "praevention", "herzgesundheit", "global"]
+    "description_de": "Weltkongress Kardiologie mit Fokus auf globale Herzgesundheit und Prävention.",
+    "keywords": [
+      "kardiologie",
+      "Prävention",
+      "herzgesundheit",
+      "global"
+    ]
   },
   {
     "id": "dgkj-2026",
-    "name": "DGKJ — Deutsche Gesellschaft fuer Kinder- und Jugendmedizin",
+    "name": "DGKJ — Deutsche Gesellschaft für Kinder- und Jugendmedizin",
     "short": "DGKJ",
     "date_start": "2026-09-16",
     "date_end": "2026-09-19",
@@ -693,24 +919,29 @@
     "country": "Deutschland",
     "venue": "Kap Europa",
     "website": "https://www.dgkj.de/kongress",
-    "specialty": "Paediatrie",
+    "specialty": "Pädiatrie",
     "type": "national",
     "cme_points": 18,
     "estimated_attendees": 4000,
     "abstract_deadline": "2026-05-01",
     "registration_deadline": "2026-09-01",
-    "description_de": "Groesster deutscher Paediatrie-Kongress. Impfungen, seltene Erkrankungen, Adoleszenzmedizin.",
-    "keywords": ["paediatrie", "kinder", "impfung", "seltene erkrankungen"]
+    "description_de": "Größter deutscher Pädiatrie-Kongress. Impfungen, seltene Erkrankungen, Adoleszenzmedizin.",
+    "keywords": [
+      "Pädiatrie",
+      "kinder",
+      "impfung",
+      "seltene erkrankungen"
+    ]
   },
   {
     "id": "dgrh-2026",
-    "name": "DGRh — Deutsche Gesellschaft fuer Rheumatologie",
+    "name": "DGRh — Deutsche Gesellschaft für Rheumatologie",
     "short": "DGRh",
     "date_start": "2026-09-02",
     "date_end": "2026-09-05",
-    "city": "Muenchen",
+    "city": "München",
     "country": "Deutschland",
-    "venue": "ICM Muenchen",
+    "venue": "ICM München",
     "website": "https://www.dgrh.de/kongress",
     "specialty": "Rheumatologie",
     "type": "national",
@@ -718,8 +949,14 @@
     "estimated_attendees": 3500,
     "abstract_deadline": "2026-05-15",
     "registration_deadline": "2026-08-15",
-    "description_de": "Zentraler deutscher Rheumatologie-Kongress. Praxisnahe Updates, Biologika, Fruehdiagnose.",
-    "keywords": ["rheumatologie", "dgrh", "autoimmun", "biologika", "deutschland"]
+    "description_de": "Zentraler deutscher Rheumatologie-Kongress. Praxisnahe Updates, Biologika, Frühdiagnose.",
+    "keywords": [
+      "rheumatologie",
+      "dgrh",
+      "autoimmun",
+      "biologika",
+      "deutschland"
+    ]
   },
   {
     "id": "eccmid-2026",
@@ -737,18 +974,24 @@
     "estimated_attendees": 15000,
     "abstract_deadline": "2025-12-01",
     "registration_deadline": "2026-03-15",
-    "description_de": "Europas groesster Infektiologie-Kongress. Antibiotikaresistenz, neue Antiinfektiva, Diagnostik.",
-    "keywords": ["infektiologie", "antibiotika", "resistenz", "mikrobiologie", "infektion"]
+    "description_de": "Europas größter Infektiologie-Kongress. Antibiotikaresistenz, neue Antiinfektiva, Diagnostik.",
+    "keywords": [
+      "infektiologie",
+      "antibiotika",
+      "resistenz",
+      "mikrobiologie",
+      "infektion"
+    ]
   },
   {
     "id": "dge-2026",
-    "name": "DGE — Deutsche Gesellschaft fuer Endokrinologie",
+    "name": "DGE — Deutsche Gesellschaft für Endokrinologie",
     "short": "DGE",
     "date_start": "2026-03-04",
     "date_end": "2026-03-07",
-    "city": "Wuerzburg",
+    "city": "Würzburg",
     "country": "Deutschland",
-    "venue": "Congress Centrum Wuerzburg",
+    "venue": "Congress Centrum Würzburg",
     "website": "https://www.endokrinologie.net/kongress",
     "specialty": "Diabetologie/Endokrinologie",
     "type": "national",
@@ -756,8 +999,14 @@
     "estimated_attendees": 2500,
     "abstract_deadline": "2025-12-15",
     "registration_deadline": "2026-02-20",
-    "description_de": "Deutscher Endokrinologie-Kongress. Schilddruese, Nebenniere, Hypophyse, Knochenstoffwechsel.",
-    "keywords": ["endokrinologie", "schilddruese", "nebenniere", "hypophyse", "osteoporose"]
+    "description_de": "Deutscher Endokrinologie-Kongress. Schilddrüse, Nebenniere, Hypophyse, Knochenstoffwechsel.",
+    "keywords": [
+      "endokrinologie",
+      "Schilddrüse",
+      "nebenniere",
+      "hypophyse",
+      "osteoporose"
+    ]
   },
   {
     "id": "dgch-2026",
@@ -765,9 +1014,9 @@
     "short": "DGCH",
     "date_start": "2026-04-07",
     "date_end": "2026-04-10",
-    "city": "Muenchen",
+    "city": "München",
     "country": "Deutschland",
-    "venue": "ICM Muenchen",
+    "venue": "ICM München",
     "website": "https://www.chirurgie.de/kongress",
     "specialty": "Chirurgie",
     "type": "national",
@@ -775,12 +1024,17 @@
     "estimated_attendees": 5000,
     "abstract_deadline": "2026-01-15",
     "registration_deadline": "2026-03-20",
-    "description_de": "Groesster deutscher Chirurgie-Kongress. Roboterassistierte OP, Viszeralchirurgie, Traumatologie.",
-    "keywords": ["chirurgie", "roboter", "viszeralchirurgie", "traumatologie"]
+    "description_de": "Größter deutscher Chirurgie-Kongress. Roboterassistierte OP, Viszeralchirurgie, Traumatologie.",
+    "keywords": [
+      "chirurgie",
+      "roboter",
+      "viszeralchirurgie",
+      "traumatologie"
+    ]
   },
   {
     "id": "dkpm-2026",
-    "name": "DGPPN — Deutsche Gesellschaft fuer Psychiatrie und Psychotherapie",
+    "name": "DGPPN — Deutsche Gesellschaft für Psychiatrie und Psychotherapie",
     "short": "DGPPN",
     "date_start": "2026-11-25",
     "date_end": "2026-11-28",
@@ -794,8 +1048,14 @@
     "estimated_attendees": 9000,
     "abstract_deadline": "2026-07-15",
     "registration_deadline": "2026-11-01",
-    "description_de": "Groesster europaeischer Psychiatrie-Kongress. Depression, Psychosen, Sucht, digitale Psychiatrie.",
-    "keywords": ["psychiatrie", "depression", "psychose", "sucht", "psychotherapie"]
+    "description_de": "Größter europäischer Psychiatrie-Kongress. Depression, Psychosen, Sucht, digitale Psychiatrie.",
+    "keywords": [
+      "psychiatrie",
+      "depression",
+      "psychose",
+      "sucht",
+      "psychotherapie"
+    ]
   },
   {
     "id": "aad-2026",
@@ -813,8 +1073,14 @@
     "estimated_attendees": 18000,
     "abstract_deadline": "2025-10-15",
     "registration_deadline": "2026-03-01",
-    "description_de": "Weltweit groesster Dermatologie-Kongress. Psoriasis-Biologika, Melanom-Immuntherapie, Neurodermitis.",
-    "keywords": ["dermatologie", "psoriasis", "melanom", "neurodermitis", "biologika"]
+    "description_de": "Weltweit größter Dermatologie-Kongress. Psoriasis-Biologika, Melanom-Immuntherapie, Neurodermitis.",
+    "keywords": [
+      "dermatologie",
+      "psoriasis",
+      "melanom",
+      "neurodermitis",
+      "biologika"
+    ]
   },
   {
     "id": "endo-2026",
@@ -832,8 +1098,14 @@
     "estimated_attendees": 8000,
     "abstract_deadline": "2026-02-01",
     "registration_deadline": "2026-05-15",
-    "description_de": "Groesster Endokrinologie-Kongress weltweit. Schilddruese, Adipositas, Nebenniere, Transgender-Medizin.",
-    "keywords": ["endokrinologie", "schilddruese", "adipositas", "hormon", "transgender"]
+    "description_de": "Größter Endokrinologie-Kongress weltweit. Schilddrüse, Adipositas, Nebenniere, Transgender-Medizin.",
+    "keywords": [
+      "endokrinologie",
+      "Schilddrüse",
+      "adipositas",
+      "hormon",
+      "transgender"
+    ]
   },
   {
     "id": "sabcs-2026",
@@ -851,7 +1123,13 @@
     "estimated_attendees": 10000,
     "abstract_deadline": "2026-09-01",
     "registration_deadline": "2026-11-15",
-    "description_de": "Weltweit fuehrender Brustkrebs-Kongress. ADCs, CDK4/6-Inhibitoren, neoadjuvante Therapie.",
-    "keywords": ["brustkrebs", "mamma", "adc", "cdk4/6", "sabcs"]
+    "description_de": "Weltweit führender Brustkrebs-Kongress. ADCs, CDK4/6-Inhibitoren, neoadjuvante Therapie.",
+    "keywords": [
+      "brustkrebs",
+      "mamma",
+      "adc",
+      "cdk4/6",
+      "sabcs"
+    ]
   }
 ]
