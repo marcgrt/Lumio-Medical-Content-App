@@ -424,6 +424,7 @@ def render_kongresse():
             "Fachgebiet",
             options=specs,
             default=[],
+            placeholder="Alle Fachgebiete",
             key="kongress_filter_spec",
         )
     with col_f2:
@@ -431,6 +432,7 @@ def render_kongresse():
             "Land",
             options=countries,
             default=[],
+            placeholder="Alle Laender",
             key="kongress_filter_country",
         )
     with col_f3:
@@ -439,6 +441,7 @@ def render_kongresse():
             options=list(month_options.keys()),
             format_func=lambda x: month_options[x],
             default=[],
+            placeholder="Alle Monate",
             key="kongress_filter_month",
         )
     with col_f4:
