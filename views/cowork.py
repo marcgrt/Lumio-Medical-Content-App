@@ -1,12 +1,13 @@
 """Lumio — Cowork Tab: Redaktions-Feed, Sammlungen, Kommentare, Zuweisungen."""
 from __future__ import annotations
 
-import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date as _date_type
 
 import streamlit as st
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
-from src.config import DB_PATH
+from src.db import get_raw_conn
 from components.auth import track_activity
 import re as _re
 
@@ -18,11 +19,10 @@ import re as _re
 def _get_all_usernames() -> dict[str, int]:
     """Return {lowercase_username: user_id} mapping, cached."""
     if "_mention_users" not in st.session_state:
-        conn = sqlite3.connect(str(DB_PATH))
-        try:
-            rows = conn.execute("SELECT id, username, display_name FROM user").fetchall()
-        finally:
-            conn.close()
+        with get_raw_conn() as conn:
+            rows = conn.execute(
+                text("SELECT id, username, display_name FROM \"user\"")
+            ).fetchall()
         mapping = {}
         for uid, uname, dname in rows:
             mapping[uname.lower()] = uid
@@ -62,9 +62,8 @@ def _highlight_mentions(text: str) -> str:
 @st.cache_data(ttl=60, show_spinner=False)
 def _check_collection_overlaps(user_id: int):
     """Show warnings for collections with overlapping articles."""
-    conn = sqlite3.connect(str(DB_PATH))
-    try:
-        overlaps = conn.execute("""
+    with get_raw_conn() as conn:
+        overlaps = conn.execute(text("""
             SELECT ca1.collection_id, ca2.collection_id,
                    c1.name, c2.name, u1.display_name, u2.display_name,
                    COUNT(*) as shared
@@ -73,16 +72,14 @@ def _check_collection_overlaps(user_id: int):
                 AND ca1.collection_id < ca2.collection_id
             JOIN collection c1 ON ca1.collection_id = c1.id AND c1.status NOT IN ('published', 'veröffentlicht') AND c1.deleted_at IS NULL
             JOIN collection c2 ON ca2.collection_id = c2.id AND c2.status NOT IN ('published', 'veröffentlicht') AND c2.deleted_at IS NULL
-            JOIN user u1 ON c1.user_id = u1.id
-            JOIN user u2 ON c2.user_id = u2.id
+            JOIN "user" u1 ON c1.user_id = u1.id
+            JOIN "user" u2 ON c2.user_id = u2.id
             WHERE c1.user_id != c2.user_id
             GROUP BY ca1.collection_id, ca2.collection_id
             HAVING COUNT(*) >= 2
             ORDER BY shared DESC
             LIMIT 5
-        """).fetchall()
-    finally:
-        conn.close()
+        """)).fetchall()
 
     if overlaps:
         with st.expander(f"⚠️ {len(overlaps)} Themen-Überschneidungen erkannt", expanded=False):
@@ -113,16 +110,15 @@ def _generate_collection_draft(
     try:
         from src.processing.prompt_builder import build_article_prompt
 
-        conn = sqlite3.connect(str(DB_PATH))
-        try:
-            rows = conn.execute("""
+        with get_raw_conn() as conn:
+            rows = conn.execute(text("""
                 SELECT a.title, a.abstract, a.journal, a.pub_date, a.summary_de,
                        a.relevance_score, a.url, a.doi
                 FROM collectionarticle ca
                 JOIN article a ON a.id = ca.article_id
-                WHERE ca.collection_id = ?
+                WHERE ca.collection_id = :collection_id
                 ORDER BY a.relevance_score DESC
-            """, (collection_id,)).fetchall()
+            """), {"collection_id": collection_id}).fetchall()
 
             if len(rows) < 2:
                 return None
@@ -144,13 +140,11 @@ def _generate_collection_draft(
                 })
 
             # Load briefing data
-            briefing_row = conn.execute("""
+            briefing_row = conn.execute(text("""
                 SELECT article_format, tonality, target_length, target_audience,
                        key_message, internal_notes
-                FROM collection WHERE id = ?
-            """, (collection_id,)).fetchone()
-        finally:
-            conn.close()
+                FROM collection WHERE id = :collection_id
+            """), {"collection_id": collection_id}).fetchone()
 
         briefing = {}
         if briefing_row:
@@ -208,27 +202,29 @@ _STATUS_CONFIG = {
 
 
 def _conn():
-    return sqlite3.connect(str(DB_PATH))
+    """Legacy helper — returns a raw connection context manager.
+
+    Prefer ``with get_raw_conn() as conn:`` directly.
+    """
+    return get_raw_conn()
 
 
 def _get_all_users() -> list[tuple[int, str]]:
     """Return [(id, display_name), ...] for all non-admin users."""
-    conn = _conn()
-    rows = conn.execute(
-        "SELECT id, display_name FROM user WHERE role != 'admin' ORDER BY display_name"
-    ).fetchall()
-    conn.close()
+    with get_raw_conn() as conn:
+        rows = conn.execute(
+            text('SELECT id, display_name FROM "user" WHERE role != \'admin\' ORDER BY display_name')
+        ).fetchall()
     return rows
 
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _get_all_users_including_admin() -> list[tuple[int, str]]:
     """Return [(id, display_name), ...] for all users. Cached 5min."""
-    conn = _conn()
-    rows = conn.execute(
-        "SELECT id, display_name FROM user ORDER BY display_name"
-    ).fetchall()
-    conn.close()
+    with get_raw_conn() as conn:
+        rows = conn.execute(
+            text('SELECT id, display_name FROM "user" ORDER BY display_name')
+        ).fetchall()
     return rows
 
 
@@ -236,32 +232,29 @@ def _create_notification(user_id: int, ntype: str, message: str,
                          collection_id: int | None = None):
     """Create a notification for a user. Fire-and-forget."""
     try:
-        conn = _conn()
         now = datetime.now(timezone.utc).isoformat()
-        conn.execute(
-            "INSERT INTO notification (user_id, type, message, link_collection_id, is_read, created_at) "
-            "VALUES (?, ?, ?, ?, 0, ?)",
-            (user_id, ntype, message, collection_id, now),
-        )
-        conn.commit()
-        conn.close()
+        with get_raw_conn() as conn:
+            conn.execute(
+                text("INSERT INTO notification (user_id, type, message, link_collection_id, is_read, created_at) "
+                     "VALUES (:user_id, :ntype, :message, :collection_id, 0, :now)"),
+                {"user_id": user_id, "ntype": ntype, "message": message,
+                 "collection_id": collection_id, "now": now},
+            )
     except Exception:
         pass
 
 
 def get_unread_count(user_id: int) -> int:
     """Get count of unread notifications for a user."""
-    conn = _conn()
     try:
-        count = conn.execute(
-            "SELECT COUNT(*) FROM notification WHERE user_id = ? AND is_read = 0",
-            (user_id,),
-        ).fetchone()[0]
+        with get_raw_conn() as conn:
+            count = conn.execute(
+                text("SELECT COUNT(*) FROM notification WHERE user_id = :user_id AND is_read = 0"),
+                {"user_id": user_id},
+            ).fetchone()[0]
         return count
     except Exception:
         return 0
-    finally:
-        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -296,20 +289,18 @@ def render_cowork():
             del st.query_params["kanban_move"]
             _valid_statuses = ["recherche", "in_arbeit", "review", "veroeffentlicht"]
             if _km_status in _valid_statuses:
-                _km_conn = _conn()
-                # Verify user owns or is assigned to this collection
-                _km_row = _km_conn.execute(
-                    "SELECT user_id, assigned_to FROM collection WHERE id = ?",
-                    (_km_cid,)
-                ).fetchone()
-                if _km_row and (_km_row[0] == user_id or (_km_row[1] is not None and _km_row[1] == user_id)):
-                    _km_conn.execute(
-                        "UPDATE collection SET status = ?, updated_at = datetime('now') WHERE id = ?",
-                        (_km_status, _km_cid),
-                    )
-                    _km_conn.commit()
-                    track_activity("kanban_move", f"collection_id={_km_cid} -> {_km_status}")
-                _km_conn.close()
+                with get_raw_conn() as _km_conn:
+                    # Verify user owns or is assigned to this collection
+                    _km_row = _km_conn.execute(
+                        text("SELECT user_id, assigned_to FROM collection WHERE id = :cid"),
+                        {"cid": _km_cid},
+                    ).fetchone()
+                    if _km_row and (_km_row[0] == user_id or (_km_row[1] is not None and _km_row[1] == user_id)):
+                        _km_conn.execute(
+                            text("UPDATE collection SET status = :status, updated_at = CURRENT_TIMESTAMP WHERE id = :cid"),
+                            {"status": _km_status, "cid": _km_cid},
+                        )
+                        track_activity("kanban_move", f"collection_id={_km_cid} -> {_km_status}")
                 st.cache_data.clear()
                 st.rerun()
         except Exception as _km_err:
@@ -347,33 +338,29 @@ def render_cowork():
 
 def _render_notifications(user_id: int):
     """Show unread notifications — split into team and system banners for admins."""
-    conn = _conn()
-    try:
-        notifs = conn.execute("""
+    with get_raw_conn() as conn:
+        notifs = conn.execute(text("""
             SELECT id, type, message, link_collection_id, created_at
             FROM notification
-            WHERE user_id = ? AND is_read = 0
+            WHERE user_id = :user_id AND is_read = 0
             ORDER BY created_at DESC
             LIMIT 20
-        """, (user_id,)).fetchall()
-    finally:
-        conn.close()
+        """), {"user_id": user_id}).fetchall()
 
     if not notifs:
         return
 
     # Auto-expire old system notifications (>48h) to keep the list clean
     try:
-        conn2 = _conn()
-        conn2.execute(
-            "UPDATE notification SET is_read = 1 "
-            "WHERE user_id = ? AND is_read = 0 "
-            "AND type = 'health_check' "
-            "AND created_at < datetime('now', '-48 hours')",
-            (user_id,),
-        )
-        conn2.commit()
-        conn2.close()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+        with get_raw_conn() as conn2:
+            conn2.execute(
+                text("UPDATE notification SET is_read = 1 "
+                     "WHERE user_id = :user_id AND is_read = 0 "
+                     "AND type = 'health_check' "
+                     "AND created_at < :cutoff"),
+                {"user_id": user_id, "cutoff": cutoff},
+            )
     except Exception:
         pass
 
@@ -432,15 +419,11 @@ def _render_notifications(user_id: int):
         st.markdown(team_html, unsafe_allow_html=True)
 
     if st.button("✓ Alle gelesen", key="mark_read_btn"):
-        conn2 = _conn()
-        try:
+        with get_raw_conn() as conn2:
             conn2.execute(
-                "UPDATE notification SET is_read = 1 WHERE user_id = ? AND is_read = 0",
-                (user_id,),
+                text("UPDATE notification SET is_read = 1 WHERE user_id = :user_id AND is_read = 0"),
+                {"user_id": user_id},
             )
-            conn2.commit()
-        finally:
-            conn2.close()
         st.rerun()
 
 
@@ -451,30 +434,31 @@ def _render_notifications(user_id: int):
 @st.cache_data(ttl=60, show_spinner=False)
 def _load_digest_data(user_id: int):
     """Load digest data with 60s cache."""
-    conn = sqlite3.connect(str(DB_PATH))
-    try:
-        since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    today = _date_type.today().isoformat()
+    in_2_days = (_date_type.today() + timedelta(days=2)).isoformat()
+    with get_raw_conn() as conn:
         new_colls = conn.execute(
-            "SELECT COUNT(*) FROM collection WHERE created_at > ? AND deleted_at IS NULL", (since,)
+            text("SELECT COUNT(*) FROM collection WHERE created_at > :since AND deleted_at IS NULL"),
+            {"since": since},
         ).fetchone()[0]
         new_comments = conn.execute(
-            "SELECT COUNT(*) FROM collectioncomment WHERE created_at > ?", (since,)
+            text("SELECT COUNT(*) FROM collectioncomment WHERE created_at > :since"),
+            {"since": since},
         ).fetchone()[0]
         status_changes = 0  # Simplified - no status_log table yet
-        upcoming = conn.execute("""
+        upcoming = conn.execute(text("""
             SELECT name, target_date, assigned_to FROM collection
-            WHERE target_date BETWEEN date('now') AND date('now', '+2 days')
+            WHERE target_date BETWEEN :today AND :in_2_days
               AND status NOT IN ('published', 'veröffentlicht')
               AND deleted_at IS NULL
-        """).fetchall()
-        my_open = conn.execute("""
+        """), {"today": today, "in_2_days": in_2_days}).fetchall()
+        my_open = conn.execute(text("""
             SELECT name, status, target_date FROM collection
-            WHERE (user_id = ? OR assigned_to = ?)
+            WHERE (user_id = :user_id OR assigned_to = :user_id)
               AND status NOT IN ('published', 'veröffentlicht')
               AND deleted_at IS NULL
-        """, (user_id, user_id)).fetchall()
-    finally:
-        conn.close()
+        """), {"user_id": user_id}).fetchall()
     return new_colls, new_comments, status_changes, upcoming, my_open
 
 
@@ -517,10 +501,10 @@ def _render_activity_digest(user_id: int):
 def _render_team_feed(current_user_id: int):
     """Show a chronological activity feed of all collections."""
     _render_activity_digest(current_user_id)
-    conn = _conn()
-    c = conn.cursor()
+    conn_cm = get_raw_conn()
+    conn = conn_cm.__enter__()
 
-    collections = c.execute("""
+    collections = conn.execute(text("""
         SELECT
             c.id, c.name, c.description, c.status,
             c.target_platform, c.target_date, c.published_url,
@@ -528,20 +512,20 @@ def _render_team_feed(current_user_id: int):
             u.display_name,
             (SELECT COUNT(*) FROM collectionarticle ca WHERE ca.collection_id = c.id) as article_count,
             c.assigned_to,
-            (SELECT display_name FROM user WHERE id = c.assigned_to) as assignee_name,
+            (SELECT display_name FROM "user" WHERE id = c.assigned_to) as assignee_name,
             (SELECT COUNT(*) FROM collectioncomment cc WHERE cc.collection_id = c.id) as comment_count
         FROM collection c
-        JOIN user u ON c.user_id = u.id
+        JOIN "user" u ON c.user_id = u.id
         WHERE c.deleted_at IS NULL
         ORDER BY c.updated_at DESC
-    """).fetchall()
+    """)).fetchall()
 
     if not collections:
         st.info(
             "Noch keine Sammlungen vorhanden. "
             "Erstelle eine neue Sammlung oder füge Artikel über den Feed hinzu."
         )
-        conn.close()
+        conn_cm.__exit__(None, None, None)
         return
 
     active = [r for r in collections if r[3] in ("recherche", "in_arbeit")]
@@ -610,13 +594,13 @@ def _render_team_feed(current_user_id: int):
         # Articles + Comments expander
         with st.expander(f"📄 {art_count} Artikel · 💬 {comment_count} Kommentare", expanded=False):
             # Articles
-            articles = c.execute("""
+            articles = conn.execute(text("""
                 SELECT a.id, a.title, a.journal, a.pub_date, a.relevance_score, ca.note
                 FROM collectionarticle ca
                 JOIN article a ON ca.article_id = a.id
-                WHERE ca.collection_id = ?
+                WHERE ca.collection_id = :cid
                 ORDER BY a.relevance_score DESC
-            """, (cid,)).fetchall()
+            """), {"cid": cid}).fetchall()
 
             if articles:
                 for art in articles:
@@ -635,7 +619,7 @@ def _render_team_feed(current_user_id: int):
             st.markdown('<div style="margin-top:10px"></div>', unsafe_allow_html=True)
             _render_comments(cid, current_user_id)
 
-    conn.close()
+    conn_cm.__exit__(None, None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -645,21 +629,21 @@ def _render_team_feed(current_user_id: int):
 @st.fragment
 def _render_comments(collection_id: int, current_user_id: int, ctx: str = "feed"):
     """Render comment thread for a collection. ctx differentiates duplicate keys."""
-    conn = _conn()
-    comments = conn.execute("""
-        SELECT cc.id, cc.text, cc.created_at, u.display_name
-        FROM collectioncomment cc
-        JOIN user u ON cc.user_id = u.id
-        WHERE cc.collection_id = ?
-        ORDER BY cc.created_at ASC
-    """, (collection_id,)).fetchall()
+    with get_raw_conn() as _cc_conn:
+        comments = _cc_conn.execute(text("""
+            SELECT cc.id, cc.text, cc.created_at, u.display_name
+            FROM collectioncomment cc
+            JOIN "user" u ON cc.user_id = u.id
+            WHERE cc.collection_id = :collection_id
+            ORDER BY cc.created_at ASC
+        """), {"collection_id": collection_id}).fetchall()
 
     if comments:
-        for cid, text, ts, author in comments:
+        for cid, comment_text, ts, author in comments:
             ts_short = ts[11:16] if len(ts) > 16 else ts[:10]
             day = ts[:10] if len(ts) > 10 else ""
             # Highlight @mentions in comment text
-            display_text = _highlight_mentions(text)
+            display_text = _highlight_mentions(comment_text)
             st.markdown(
                 f'<div style="font-size:0.72rem;padding:4px 8px;margin:2px 0;'
                 f'background:var(--c-surface);border-radius:6px">'
@@ -685,26 +669,25 @@ def _render_comments(collection_id: int, current_user_id: int, ctx: str = "feed"
                       use_container_width=True):
             if new_comment and new_comment.strip():
                 now = datetime.now(timezone.utc).isoformat()
-                conn2 = _conn()
-                conn2.execute(
-                    "INSERT INTO collectioncomment (collection_id, user_id, text, created_at) "
-                    "VALUES (?, ?, ?, ?)",
-                    (collection_id, current_user_id, new_comment.strip(), now),
-                )
-                # Update collection timestamp
-                conn2.execute(
-                    "UPDATE collection SET updated_at = ? WHERE id = ?",
-                    (now, collection_id),
-                )
-                conn2.commit()
+                with get_raw_conn() as conn2:
+                    conn2.execute(
+                        text("INSERT INTO collectioncomment (collection_id, user_id, text, created_at) "
+                             "VALUES (:collection_id, :user_id, :comment_text, :now)"),
+                        {"collection_id": collection_id, "user_id": current_user_id,
+                         "comment_text": new_comment.strip(), "now": now},
+                    )
+                    # Update collection timestamp
+                    conn2.execute(
+                        text("UPDATE collection SET updated_at = :now WHERE id = :cid"),
+                        {"now": now, "cid": collection_id},
+                    )
 
-                # Notify collection owner + assignee
-                current_name = st.session_state.get("current_user", {}).get("display_name", "?")
-                coll_info = conn2.execute(
-                    "SELECT user_id, assigned_to, name FROM collection WHERE id = ?",
-                    (collection_id,),
-                ).fetchone()
-                conn2.close()
+                    # Notify collection owner + assignee
+                    current_name = st.session_state.get("current_user", {}).get("display_name", "?")
+                    coll_info = conn2.execute(
+                        text("SELECT user_id, assigned_to, name FROM collection WHERE id = :cid"),
+                        {"cid": collection_id},
+                    ).fetchone()
 
                 if coll_info:
                     owner_id, assignee_id, coll_name = coll_info
@@ -729,8 +712,6 @@ def _render_comments(collection_id: int, current_user_id: int, ctx: str = "feed"
                 track_activity("comment", f"collection={collection_id}")
                 st.rerun()
 
-    conn.close()
-
 
 # ---------------------------------------------------------------------------
 # My collections — manage own collections
@@ -739,53 +720,51 @@ def _render_comments(collection_id: int, current_user_id: int, ctx: str = "feed"
 @st.fragment
 def _render_my_collections(user_id: int):
     """Show and manage the current user's collections."""
-    conn = _conn()
 
     # Batch: load all collections + counts in one query
-    my_colls = conn.execute("""
-        SELECT
-            c.id, c.name, c.status, c.target_platform, c.target_date,
-            c.published_url, c.description, c.assigned_to,
-            (SELECT COUNT(*) FROM collectionarticle ca WHERE ca.collection_id = c.id) as cnt,
-            u.display_name as owner_name,
-            (SELECT display_name FROM user WHERE id = c.assigned_to) as assignee_name
-        FROM collection c
-        JOIN user u ON c.user_id = u.id
-        WHERE (c.user_id = ? OR c.assigned_to = ?)
-          AND c.deleted_at IS NULL
-        ORDER BY c.updated_at DESC
-    """, (user_id, user_id)).fetchall()
+    with get_raw_conn() as conn:
+        my_colls = conn.execute(text("""
+            SELECT
+                c.id, c.name, c.status, c.target_platform, c.target_date,
+                c.published_url, c.description, c.assigned_to,
+                (SELECT COUNT(*) FROM collectionarticle ca WHERE ca.collection_id = c.id) as cnt,
+                u.display_name as owner_name,
+                (SELECT display_name FROM "user" WHERE id = c.assigned_to) as assignee_name
+            FROM collection c
+            JOIN "user" u ON c.user_id = u.id
+            WHERE (c.user_id = :user_id OR c.assigned_to = :user_id)
+              AND c.deleted_at IS NULL
+            ORDER BY c.updated_at DESC
+        """), {"user_id": user_id}).fetchall()
 
-    if not my_colls:
-        st.info("Du hast noch keine Sammlungen. Erstelle eine im Tab '➕ Neue Sammlung'.")
-        conn.close()
-        return
+        if not my_colls:
+            st.info("Du hast noch keine Sammlungen. Erstelle eine im Tab '➕ Neue Sammlung'.")
+            return
 
-    # Batch: preload ALL comments for all my collections in one query
-    _coll_ids = [c[0] for c in my_colls]
-    _id_placeholders = ",".join("?" * len(_coll_ids))
-    _all_comments = {}
-    for row in conn.execute(f"""
-        SELECT cc.collection_id, cc.user_id, cc.text, cc.created_at, u.display_name
-        FROM collectioncomment cc
-        JOIN user u ON cc.user_id = u.id
-        WHERE cc.collection_id IN ({_id_placeholders})
-        ORDER BY cc.created_at ASC
-    """, _coll_ids).fetchall():
-        _all_comments.setdefault(row[0], []).append(row)
+        # Batch: preload ALL comments for all my collections in one query
+        _coll_ids = [c[0] for c in my_colls]
+        _id_binds = {f"cid_{i}": v for i, v in enumerate(_coll_ids)}
+        _id_placeholders = ", ".join(f":cid_{i}" for i in range(len(_coll_ids)))
+        _all_comments = {}
+        for row in conn.execute(text(f"""
+            SELECT cc.collection_id, cc.user_id, cc.text, cc.created_at, u.display_name
+            FROM collectioncomment cc
+            JOIN "user" u ON cc.user_id = u.id
+            WHERE cc.collection_id IN ({_id_placeholders})
+            ORDER BY cc.created_at ASC
+        """), _id_binds).fetchall():
+            _all_comments.setdefault(row[0], []).append(row)
 
-    # Batch: preload ALL draft versions
-    _all_drafts = {}
-    for row in conn.execute(f"""
-        SELECT collection_id, id, version, draft_text, feedback_text,
-               generated_at, generated_by_user, generated_by_model, is_active
-        FROM collection_draft
-        WHERE collection_id IN ({_id_placeholders})
-        ORDER BY version DESC
-    """, _coll_ids).fetchall():
-        _all_drafts.setdefault(row[0], []).append(row)
-
-    conn.close()
+        # Batch: preload ALL draft versions
+        _all_drafts = {}
+        for row in conn.execute(text(f"""
+            SELECT collection_id, id, version, draft_text, feedback_text,
+                   generated_at, generated_by_user, generated_by_model, is_active
+            FROM collection_draft
+            WHERE collection_id IN ({_id_placeholders})
+            ORDER BY version DESC
+        """), _id_binds).fetchall():
+            _all_drafts.setdefault(row[0], []).append(row)
 
     all_users = _get_all_users_including_admin()
 
@@ -896,27 +875,26 @@ def _render_my_collections(user_id: int):
                     now = datetime.now(timezone.utc).isoformat()
                     new_assigned_id = new_assignee[0] if new_assignee[0] != 0 else None
 
-                    c2 = _conn()
                     _save_name = new_name.strip() if new_name else name
-                    c2.execute("""
-                        UPDATE collection
-                        SET name = ?, status = ?, target_platform = ?, target_date = ?,
-                            published_url = ?, description = ?, assigned_to = ?,
-                            updated_at = ?
-                        WHERE id = ?
-                    """, (
-                        _save_name,
-                        new_status,
-                        new_platform or None,
-                        str(new_target) if new_target else None,
-                        new_url or None,
-                        new_desc or None,
-                        new_assigned_id,
-                        now,
-                        cid,
-                    ))
-                    c2.commit()
-                    c2.close()
+                    with get_raw_conn() as c2:
+                        c2.execute(text("""
+                            UPDATE collection
+                            SET name = :name, status = :status, target_platform = :platform,
+                                target_date = :target_date, published_url = :pub_url,
+                                description = :description, assigned_to = :assigned_to,
+                                updated_at = :now
+                            WHERE id = :cid
+                        """), {
+                            "name": _save_name,
+                            "status": new_status,
+                            "platform": new_platform or None,
+                            "target_date": str(new_target) if new_target else None,
+                            "pub_url": new_url or None,
+                            "description": new_desc or None,
+                            "assigned_to": new_assigned_id,
+                            "now": now,
+                            "cid": cid,
+                        })
 
                     # Notify if assigned to someone new
                     if new_assigned_id and new_assigned_id != (assigned_to or 0) and new_assigned_id != user_id:
@@ -941,10 +919,8 @@ def _render_my_collections(user_id: int):
                 _d1, _d2 = st.columns(2)
                 with _d1:
                     if st.button("Ja, löschen", key=f"coll_del_yes_{cid}", use_container_width=True):
-                        c3 = _conn()
-                        c3.execute("UPDATE collection SET deleted_at = datetime('now'), status = 'verworfen' WHERE id = ?", (cid,))
-                        c3.commit()
-                        c3.close()
+                        with get_raw_conn() as c3:
+                            c3.execute(text("UPDATE collection SET deleted_at = CURRENT_TIMESTAMP, status = 'verworfen' WHERE id = :cid"), {"cid": cid})
                         track_activity("collection_delete", f"id={cid} name={name}")
                         st.session_state.pop(f"_confirm_del_{cid}", None)
                         st.rerun()
@@ -954,48 +930,41 @@ def _render_my_collections(user_id: int):
                         st.rerun()
 
 
-    conn.close()
-
-
 # ---------------------------------------------------------------------------
 # Kanban Board — visual status overview
 # ---------------------------------------------------------------------------
 
 def _render_draft_section(cid: int, name: str, art_count: int, user_id: int):
     """Render versioned draft section with feedback loop."""
-    dconn = sqlite3.connect(str(DB_PATH))
-    try:
+    with get_raw_conn() as dconn:
         # Get all versions for this collection
-        versions = dconn.execute("""
+        versions = dconn.execute(text("""
             SELECT id, version, draft_text, feedback_text, generated_at,
                    generated_by_user, generated_by_model, is_active
             FROM collection_draft
-            WHERE collection_id = ?
+            WHERE collection_id = :cid
             ORDER BY version DESC
-        """, (cid,)).fetchall()
+        """), {"cid": cid}).fetchall()
 
         # Also check legacy draft_text on collection
         if not versions:
             legacy = dconn.execute(
-                "SELECT draft_text, draft_generated_at, draft_generated_by FROM collection WHERE id = ?",
-                (cid,)
+                text("SELECT draft_text, draft_generated_at, draft_generated_by FROM collection WHERE id = :cid"),
+                {"cid": cid},
             ).fetchone()
             if legacy and legacy[0]:
                 # Migrate legacy draft to new table
                 dconn.execute(
-                    "INSERT INTO collection_draft (collection_id, version, draft_text, generated_by_user, generated_at, is_active) "
-                    "VALUES (?, 1, ?, ?, ?, 1)",
-                    (cid, legacy[0], legacy[2], legacy[1] or datetime.now(timezone.utc).isoformat())
+                    text("INSERT INTO collection_draft (collection_id, version, draft_text, generated_by_user, generated_at, is_active) "
+                         "VALUES (:cid, 1, :draft_text, :gen_by, :gen_at, 1)"),
+                    {"cid": cid, "draft_text": legacy[0], "gen_by": legacy[2],
+                     "gen_at": legacy[1] or datetime.now(timezone.utc).isoformat()},
                 )
-                dconn.commit()
-                versions = dconn.execute(
+                versions = dconn.execute(text(
                     "SELECT id, version, draft_text, feedback_text, generated_at, "
                     "generated_by_user, generated_by_model, is_active "
-                    "FROM collection_draft WHERE collection_id = ? ORDER BY version DESC",
-                    (cid,)
-                ).fetchall()
-    finally:
-        dconn.close()
+                    "FROM collection_draft WHERE collection_id = :cid ORDER BY version DESC"
+                ), {"cid": cid}).fetchall()
 
     active = [v for v in versions if v[7]]  # is_active = 1
     current = active[0] if active else None
@@ -1023,10 +992,9 @@ def _render_draft_section(cid: int, name: str, art_count: int, user_id: int):
         # Metadata
         _gen_name = ""
         if _gen_by:
-            dconn2 = sqlite3.connect(str(DB_PATH))
-            _r = dconn2.execute("SELECT display_name FROM user WHERE id = ?", (_gen_by,)).fetchone()
+            with get_raw_conn() as dconn2:
+                _r = dconn2.execute(text('SELECT display_name FROM "user" WHERE id = :uid'), {"uid": _gen_by}).fetchone()
             _gen_name = f" von {_r[0]}" if _r else ""
-            dconn2.close()
         st.caption(f"v{_ver} · Generiert {(_gen_at or '')[:16]}{_gen_name}")
 
         st.markdown(_text)
@@ -1056,27 +1024,26 @@ def _render_draft_section(cid: int, name: str, art_count: int, user_id: int):
                         _new_text = _iterate_draft(cid, name, _text, feedback.strip())
                         if _new_text:
                             new_ver = _ver + 1
-                            dconn3 = sqlite3.connect(str(DB_PATH))
-                            # Deactivate all, activate new
-                            dconn3.execute(
-                                "UPDATE collection_draft SET is_active = 0 WHERE collection_id = ?",
-                                (cid,)
-                            )
-                            dconn3.execute(
-                                "INSERT INTO collection_draft (collection_id, version, draft_text, "
-                                "feedback_text, generated_by_user, generated_at, is_active) "
-                                "VALUES (?, ?, ?, ?, ?, datetime('now'), 1)",
-                                (cid, new_ver, _new_text, feedback.strip(), user_id)
-                            )
-                            # Also update legacy field for backward compat
-                            dconn3.execute(
-                                "UPDATE collection SET draft_text = ?, "
-                                "draft_generated_at = datetime('now'), draft_generated_by = ? "
-                                "WHERE id = ?",
-                                (_new_text, user_id, cid)
-                            )
-                            dconn3.commit()
-                            dconn3.close()
+                            with get_raw_conn() as dconn3:
+                                # Deactivate all, activate new
+                                dconn3.execute(
+                                    text("UPDATE collection_draft SET is_active = 0 WHERE collection_id = :cid"),
+                                    {"cid": cid},
+                                )
+                                dconn3.execute(
+                                    text("INSERT INTO collection_draft (collection_id, version, draft_text, "
+                                         "feedback_text, generated_by_user, generated_at, is_active) "
+                                         "VALUES (:cid, :ver, :draft_text, :feedback, :uid, CURRENT_TIMESTAMP, 1)"),
+                                    {"cid": cid, "ver": new_ver, "draft_text": _new_text,
+                                     "feedback": feedback.strip(), "uid": user_id},
+                                )
+                                # Also update legacy field for backward compat
+                                dconn3.execute(
+                                    text("UPDATE collection SET draft_text = :draft_text, "
+                                         "draft_generated_at = CURRENT_TIMESTAMP, draft_generated_by = :uid "
+                                         "WHERE id = :cid"),
+                                    {"draft_text": _new_text, "uid": user_id, "cid": cid},
+                                )
                             track_activity("draft_iterate", f"collection={cid},v={new_ver}")
                             st.rerun()
                         else:
@@ -1090,40 +1057,36 @@ def _render_draft_section(cid: int, name: str, art_count: int, user_id: int):
                     _new_text = _generate_collection_draft(cid, name)
                     if _new_text:
                         new_ver = (versions[0][1] if versions else 0) + 1
-                        dconn4 = sqlite3.connect(str(DB_PATH))
-                        dconn4.execute(
-                            "UPDATE collection_draft SET is_active = 0 WHERE collection_id = ?",
-                            (cid,)
-                        )
-                        dconn4.execute(
-                            "INSERT INTO collection_draft (collection_id, version, draft_text, "
-                            "generated_by_user, generated_at, is_active) "
-                            "VALUES (?, ?, ?, ?, datetime('now'), 1)",
-                            (cid, new_ver, _new_text, user_id)
-                        )
-                        dconn4.execute(
-                            "UPDATE collection SET draft_text = ?, "
-                            "draft_generated_at = datetime('now'), draft_generated_by = ? "
-                            "WHERE id = ?",
-                            (_new_text, user_id, cid)
-                        )
-                        dconn4.commit()
-                        dconn4.close()
+                        with get_raw_conn() as dconn4:
+                            dconn4.execute(
+                                text("UPDATE collection_draft SET is_active = 0 WHERE collection_id = :cid"),
+                                {"cid": cid},
+                            )
+                            dconn4.execute(
+                                text("INSERT INTO collection_draft (collection_id, version, draft_text, "
+                                     "generated_by_user, generated_at, is_active) "
+                                     "VALUES (:cid, :ver, :draft_text, :uid, CURRENT_TIMESTAMP, 1)"),
+                                {"cid": cid, "ver": new_ver, "draft_text": _new_text, "uid": user_id},
+                            )
+                            dconn4.execute(
+                                text("UPDATE collection SET draft_text = :draft_text, "
+                                     "draft_generated_at = CURRENT_TIMESTAMP, draft_generated_by = :uid "
+                                     "WHERE id = :cid"),
+                                {"draft_text": _new_text, "uid": user_id, "cid": cid},
+                            )
                         track_activity("draft_regen", f"collection={cid},v={new_ver}")
                         st.rerun()
                     else:
                         st.error("⚠️ **Generierung fehlgeschlagen.** Bitte in 10 Min erneut versuchen.")
         with _d3:
             if st.button("🗑 Verwerfen", key=f"draft_del_{cid}", use_container_width=True):
-                dconn5 = sqlite3.connect(str(DB_PATH))
-                dconn5.execute("DELETE FROM collection_draft WHERE collection_id = ?", (cid,))
-                dconn5.execute(
-                    "UPDATE collection SET draft_text = NULL, "
-                    "draft_generated_at = NULL, draft_generated_by = NULL WHERE id = ?",
-                    (cid,)
-                )
-                dconn5.commit()
-                dconn5.close()
+                with get_raw_conn() as dconn5:
+                    dconn5.execute(text("DELETE FROM collection_draft WHERE collection_id = :cid"), {"cid": cid})
+                    dconn5.execute(
+                        text("UPDATE collection SET draft_text = NULL, "
+                             "draft_generated_at = NULL, draft_generated_by = NULL WHERE id = :cid"),
+                        {"cid": cid},
+                    )
                 st.rerun()
     else:
         # No draft yet — show full generation UI
@@ -1353,14 +1316,13 @@ def _render_draft_section(cid: int, name: str, art_count: int, user_id: int):
                 _gen_briefing["keywords"] = _kw_val
 
             # Load articles for preview
-            _prev_conn = _conn()
-            _prev_arts = _prev_conn.execute("""
-                SELECT a.title, a.abstract, a.journal, a.pub_date, a.summary_de,
-                       a.url, a.doi
-                FROM collectionarticle ca JOIN article a ON a.id = ca.article_id
-                WHERE ca.collection_id = ? ORDER BY a.relevance_score DESC LIMIT 10
-            """, (cid,)).fetchall()
-            _prev_conn.close()
+            with get_raw_conn() as _prev_conn:
+                _prev_arts = _prev_conn.execute(text("""
+                    SELECT a.title, a.abstract, a.journal, a.pub_date, a.summary_de,
+                           a.url, a.doi
+                    FROM collectionarticle ca JOIN article a ON a.id = ca.article_id
+                    WHERE ca.collection_id = :cid ORDER BY a.relevance_score DESC LIMIT 10
+                """), {"cid": cid}).fetchall()
             _prev_articles = [
                 {"title": r[0], "abstract": r[1] or "", "journal": r[2] or "",
                  "pub_date": str(r[3]) if r[3] else "", "summary_de": r[4] or "",
@@ -1402,24 +1364,22 @@ def _render_draft_section(cid: int, name: str, art_count: int, user_id: int):
                         fs_examples=fs_examples,
                     )
                     if _draft_text:
-                        dconn6 = sqlite3.connect(str(DB_PATH))
-                        try:
+                        with get_raw_conn() as dconn6:
+                            try:
+                                dconn6.execute(
+                                    text("INSERT INTO collection_draft (collection_id, version, draft_text, "
+                                         "generated_by_user, generated_at, is_active) "
+                                         "VALUES (:cid, 1, :draft_text, :uid, CURRENT_TIMESTAMP, 1)"),
+                                    {"cid": cid, "draft_text": _draft_text, "uid": user_id},
+                                )
+                            except Exception:
+                                pass
                             dconn6.execute(
-                                "INSERT INTO collection_draft (collection_id, version, draft_text, "
-                                "generated_by_user, generated_at, is_active) "
-                                "VALUES (?, 1, ?, ?, datetime('now'), 1)",
-                                (cid, _draft_text, user_id)
+                                text("UPDATE collection SET draft_text = :draft_text, "
+                                     "draft_generated_at = CURRENT_TIMESTAMP, draft_generated_by = :uid "
+                                     "WHERE id = :cid"),
+                                {"draft_text": _draft_text, "uid": user_id, "cid": cid},
                             )
-                        except Exception:
-                            pass
-                        dconn6.execute(
-                            "UPDATE collection SET draft_text = ?, "
-                            "draft_generated_at = datetime('now'), draft_generated_by = ? "
-                            "WHERE id = ?",
-                            (_draft_text, user_id, cid)
-                        )
-                        dconn6.commit()
-                        dconn6.close()
                         track_activity("collection_draft",
                                        f"collection_id={cid},tech={chosen_tech},pro={pro_label}")
                         st.rerun()
@@ -1434,16 +1394,13 @@ def _render_draft_section(cid: int, name: str, art_count: int, user_id: int):
 def _iterate_draft(cid: int, name: str, current_text: str, feedback: str) -> str | None:
     """Generate an improved draft based on feedback."""
     try:
-        conn = sqlite3.connect(str(DB_PATH))
-        try:
-            rows = conn.execute("""
+        with get_raw_conn() as conn:
+            rows = conn.execute(text("""
                 SELECT a.title, a.summary_de
                 FROM collectionarticle ca JOIN article a ON a.id = ca.article_id
-                WHERE ca.collection_id = ?
+                WHERE ca.collection_id = :cid
                 ORDER BY a.relevance_score DESC LIMIT 10
-            """, (cid,)).fetchall()
-        finally:
-            conn.close()
+            """), {"cid": cid}).fetchall()
 
         sources_brief = "\n".join(f"- {t[:60]}" for t, _ in rows)
 
@@ -1483,9 +1440,8 @@ _STATUS_COLUMNS = [
 @st.cache_data(ttl=10, show_spinner=False)
 def _load_kanban_data():
     """Load kanban data with short cache."""
-    conn = _conn()
-    try:
-        all_colls = conn.execute("""
+    with get_raw_conn() as conn:
+        all_colls = conn.execute(text("""
             SELECT c.id, c.name, c.status, c.target_date, c.assigned_to,
                    u.display_name as creator,
                    au.display_name as assignee_name,
@@ -1494,13 +1450,11 @@ def _load_kanban_data():
                    c.draft_text IS NOT NULL as has_draft,
                    c.user_id
             FROM collection c
-            JOIN user u ON c.user_id = u.id
-            LEFT JOIN user au ON c.assigned_to = au.id
+            JOIN "user" u ON c.user_id = u.id
+            LEFT JOIN "user" au ON c.assigned_to = au.id
             WHERE c.deleted_at IS NULL
             ORDER BY c.updated_at DESC
-        """).fetchall()
-    finally:
-        conn.close()
+        """)).fetchall()
     return all_colls
 
 
@@ -1540,8 +1494,7 @@ def _render_kanban_board(user_id: int):
             deadline_class = ""
             if tdate:
                 try:
-                    from datetime import date as _date
-                    dl = (_date.fromisoformat(str(tdate)) - _date.today()).days
+                    dl = (_date_type.fromisoformat(str(tdate)) - _date_type.today()).days
                     if dl < 0:
                         deadline_str = f"⏰ {abs(dl)}d überfällig"
                         deadline_class = "overdue"
@@ -1775,12 +1728,10 @@ def _render_kanban_board(user_id: int):
                         label_visibility="collapsed",
                     )
                     if _new_status != s_key:
-                        _mv = _conn()
-                        _mv.execute(
-                            "UPDATE collection SET status = ?, updated_at = datetime('now') WHERE id = ?",
-                            (_new_status, cid))
-                        _mv.commit()
-                        _mv.close()
+                        with get_raw_conn() as _mv:
+                            _mv.execute(
+                                text("UPDATE collection SET status = :status, updated_at = CURRENT_TIMESTAMP WHERE id = :cid"),
+                                {"status": _new_status, "cid": cid})
                         track_activity("kanban_move", f"collection_id={cid} -> {_new_status}")
                         st.rerun()
 
@@ -1801,27 +1752,24 @@ _STATUS_COLORS = {
 @st.cache_data(ttl=30, show_spinner=False)
 def _load_calendar_data():
     """Load calendar data with caching to avoid re-querying on every render."""
-    conn = sqlite3.connect(str(DB_PATH))
-    try:
-        colls = conn.execute("""
+    with get_raw_conn() as conn:
+        colls = conn.execute(text("""
             SELECT c.id, c.name, c.status, c.target_date,
                    u.display_name,
-                   (SELECT display_name FROM user WHERE id = c.assigned_to) as assignee
+                   (SELECT display_name FROM "user" WHERE id = c.assigned_to) as assignee
             FROM collection c
-            JOIN user u ON c.user_id = u.id
+            JOIN "user" u ON c.user_id = u.id
             WHERE c.target_date IS NOT NULL
               AND c.deleted_at IS NULL
             ORDER BY c.target_date
-        """).fetchall()
-        unplanned = conn.execute("""
+        """)).fetchall()
+        unplanned = conn.execute(text("""
             SELECT c.name, c.status, u.display_name
-            FROM collection c JOIN user u ON c.user_id = u.id
+            FROM collection c JOIN "user" u ON c.user_id = u.id
             WHERE (c.target_date IS NULL OR c.target_date = '')
               AND c.status NOT IN ('published', 'veröffentlicht')
               AND c.deleted_at IS NULL
-        """).fetchall()
-    finally:
-        conn.close()
+        """)).fetchall()
     return colls, unplanned
 
 
@@ -2046,32 +1994,32 @@ def _render_create_collection(user_id: int):
             _len = target_length if target_length != "—" else None
             _aud = ",".join(target_audience) if target_audience else None
 
-            conn = _conn()
-            try:
-                conn.execute("""
+            with get_raw_conn() as conn:
+                result = conn.execute(text("""
                     INSERT INTO collection (user_id, name, description, status,
                         target_platform, target_date, assigned_to,
                         article_format, tonality, target_length, target_audience,
                         key_message, internal_notes,
                         created_at, updated_at)
-                    VALUES (?, ?, ?, 'recherche', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    user_id, name.strip(), None,
-                    "esanum",
-                    str(target_date) if target_date else None,
-                    assigned_id,
-                    _fmt, _ton, _len, _aud,
-                    key_message.strip() or None,
-                    internal_notes.strip() or None,
-                    now, now,
-                ))
-                _new_cid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                    VALUES (:user_id, :name, NULL, 'recherche', :platform, :target_date,
+                            :assigned_id, :fmt, :ton, :len, :aud, :key_message,
+                            :internal_notes, :now, :now)
+                    RETURNING id
+                """), {
+                    "user_id": user_id, "name": name.strip(),
+                    "platform": "esanum",
+                    "target_date": str(target_date) if target_date else None,
+                    "assigned_id": assigned_id,
+                    "fmt": _fmt, "ton": _ton, "len": _len, "aud": _aud,
+                    "key_message": key_message.strip() or None,
+                    "internal_notes": internal_notes.strip() or None,
+                    "now": now,
+                })
+                row = result.fetchone()
+                _new_cid = row[0] if row else 0
                 if not _new_cid or _new_cid == 0:
                     st.error("Sammlung konnte nicht erstellt werden.")
                     return
-                conn.commit()
-            finally:
-                conn.close()
 
             # Notify assignee
             if assigned_id and assigned_id != user_id:
@@ -2100,31 +2048,28 @@ def _render_create_collection(user_id: int):
 
 def get_user_collections(user_id: int) -> list[tuple[int, str]]:
     """Return [(id, name), ...] for collections the user owns or is assigned to."""
-    conn = _conn()
-    rows = conn.execute(
-        "SELECT id, name FROM collection WHERE (user_id = ? OR assigned_to = ?) AND deleted_at IS NULL ORDER BY updated_at DESC",
-        (user_id, user_id),
-    ).fetchall()
-    conn.close()
+    with get_raw_conn() as conn:
+        rows = conn.execute(
+            text("SELECT id, name FROM collection WHERE (user_id = :uid OR assigned_to = :uid) AND deleted_at IS NULL ORDER BY updated_at DESC"),
+            {"uid": user_id},
+        ).fetchall()
     return rows
 
 
 def add_article_to_collection(collection_id: int, article_id: int) -> bool:
     """Add an article to a collection. Returns True if added, False if already exists."""
-    conn = _conn()
     try:
         now = datetime.now(timezone.utc).isoformat()
-        conn.execute(
-            "INSERT INTO collectionarticle (collection_id, article_id, added_at) VALUES (?, ?, ?)",
-            (collection_id, article_id, now),
-        )
-        conn.execute(
-            "UPDATE collection SET updated_at = ? WHERE id = ?",
-            (now, collection_id),
-        )
-        conn.commit()
+        with get_raw_conn() as conn:
+            conn.execute(
+                text("INSERT INTO collectionarticle (collection_id, article_id, added_at) "
+                     "VALUES (:collection_id, :article_id, :now)"),
+                {"collection_id": collection_id, "article_id": article_id, "now": now},
+            )
+            conn.execute(
+                text("UPDATE collection SET updated_at = :now WHERE id = :cid"),
+                {"now": now, "cid": collection_id},
+            )
         return True
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         return False
-    finally:
-        conn.close()

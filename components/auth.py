@@ -6,8 +6,10 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import streamlit as st
+from sqlalchemy import text
 from sqlmodel import select
 
+from src.db import get_raw_conn, is_postgres
 from src.models import get_session
 
 
@@ -37,14 +39,10 @@ def _verify_password(password: str, stored_hash: str) -> bool:
 
 def _get_all_users() -> list[dict]:
     """Fetch all users from DB."""
-    import sqlite3
-    from src.models import DB_PATH
-    conn = sqlite3.connect(str(DB_PATH))
-    c = conn.cursor()
-    rows = c.execute(
-        "SELECT id, username, display_name, password_hash, role FROM user"
-    ).fetchall()
-    conn.close()
+    with get_raw_conn() as conn:
+        rows = conn.execute(
+            text("SELECT id, username, display_name, password_hash, role FROM \"user\"")
+        ).fetchall()
     return [
         {"id": r[0], "username": r[1], "display_name": r[2],
          "password_hash": r[3], "role": r[4]}
@@ -54,75 +52,60 @@ def _get_all_users() -> list[dict]:
 
 def create_user(username: str, display_name: str, password: str, role: str = "user"):
     """Create a new user in the DB."""
-    import sqlite3
-    from src.models import DB_PATH
-    conn = sqlite3.connect(str(DB_PATH))
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO user (username, display_name, password_hash, role, created_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (username, display_name, _hash_password(password), role,
-         datetime.now(timezone.utc).isoformat()),
-    )
-    conn.commit()
-    conn.close()
+    with get_raw_conn() as conn:
+        conn.execute(
+            text(
+                'INSERT INTO "user" (username, display_name, password_hash, role, created_at) '
+                "VALUES (:username, :display_name, :password_hash, :role, :created_at)"
+            ),
+            {
+                "username": username,
+                "display_name": display_name,
+                "password_hash": _hash_password(password),
+                "role": role,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
 
 
 def delete_user(user_id: int) -> bool:
     """Delete a user and all associated data. Returns True on success."""
-    import sqlite3
-    from src.models import DB_PATH
-    import streamlit as st
-
     current_user = st.session_state.get("current_user")
     if current_user and current_user.get("id") == user_id:
         return False  # Cannot delete yourself
 
-    conn = sqlite3.connect(str(DB_PATH))
     try:
-        c = conn.cursor()
-        c.execute("DELETE FROM session_token WHERE user_id = ?", (user_id,))
-        c.execute("DELETE FROM userprofile WHERE user_id = ?", (user_id,))
-        c.execute("DELETE FROM useractivity WHERE user_id = ?", (user_id,))
-        c.execute("DELETE FROM user WHERE id = ?", (user_id,))
-        conn.commit()
+        with get_raw_conn() as conn:
+            conn.execute(text("DELETE FROM session_token WHERE user_id = :uid"), {"uid": user_id})
+            conn.execute(text("DELETE FROM userprofile WHERE user_id = :uid"), {"uid": user_id})
+            conn.execute(text("DELETE FROM useractivity WHERE user_id = :uid"), {"uid": user_id})
+            conn.execute(text('DELETE FROM "user" WHERE id = :uid'), {"uid": user_id})
         return True
     except Exception:
         return False
-    finally:
-        conn.close()
 
 
 def reset_user_password(user_id: int, new_password: str) -> bool:
     """Reset password for any user (admin function). Returns True on success."""
-    import sqlite3
-    from src.models import DB_PATH
-
     if len(new_password) < 6:
         return False
-    conn = sqlite3.connect(str(DB_PATH))
     try:
-        conn.execute(
-            "UPDATE user SET password_hash = ? WHERE id = ?",
-            (_hash_password(new_password), user_id),
-        )
-        conn.commit()
+        with get_raw_conn() as conn:
+            conn.execute(
+                text('UPDATE "user" SET password_hash = :hash WHERE id = :uid'),
+                {"hash": _hash_password(new_password), "uid": user_id},
+            )
         return True
     except Exception:
         return False
-    finally:
-        conn.close()
 
 
 def get_all_users_safe() -> list[dict]:
     """Return all users WITHOUT password hashes (safe for UI display)."""
-    import sqlite3
-    from src.models import DB_PATH
-    conn = sqlite3.connect(str(DB_PATH))
-    rows = conn.execute(
-        "SELECT id, username, display_name, role, created_at FROM user ORDER BY id"
-    ).fetchall()
-    conn.close()
+    with get_raw_conn() as conn:
+        rows = conn.execute(
+            text('SELECT id, username, display_name, role, created_at FROM "user" ORDER BY id')
+        ).fetchall()
     return [
         {"id": r[0], "username": r[1], "display_name": r[2],
          "role": r[3], "created_at": r[4]}
@@ -136,54 +119,45 @@ def get_all_users_safe() -> list[dict]:
 
 def _generate_session_token(user_id: int) -> str:
     """Generate a session token and store in DB. Valid for 7 days."""
-    import sqlite3, secrets
-    from datetime import datetime, timezone, timedelta
-    from src.config import DB_PATH
+    import secrets
+    from datetime import timedelta
 
     token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc).isoformat()
     expires = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
 
-    conn = sqlite3.connect(str(DB_PATH))
-    # Create table if not exists
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS session_token (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            token TEXT NOT NULL UNIQUE,
-            expires_at TEXT NOT NULL,
-            created_at TEXT NOT NULL
+    with get_raw_conn() as conn:
+        # Clean expired tokens
+        conn.execute(
+            text("DELETE FROM session_token WHERE expires_at < :now"),
+            {"now": now},
         )
-    """)
-    # Clean expired tokens
-    conn.execute("DELETE FROM session_token WHERE expires_at < ?",
-                 (datetime.now(timezone.utc).isoformat(),))
-    # Insert new token
-    conn.execute(
-        "INSERT INTO session_token (user_id, token, expires_at, created_at) VALUES (?, ?, ?, ?)",
-        (user_id, token, expires, datetime.now(timezone.utc).isoformat()),
-    )
-    conn.commit()
-    conn.close()
+        # Insert new token
+        conn.execute(
+            text(
+                "INSERT INTO session_token (user_id, token, expires_at, created_at) "
+                "VALUES (:user_id, :token, :expires_at, :created_at)"
+            ),
+            {"user_id": user_id, "token": token, "expires_at": expires, "created_at": now},
+        )
     return token
 
 
 def _validate_session_token(token: str) -> Optional[dict]:
     """Check if token is valid and return user dict, or None."""
-    import sqlite3
-    from datetime import datetime, timezone
-    from src.config import DB_PATH
-
     if not token:
         return None
 
-    conn = sqlite3.connect(str(DB_PATH))
-    row = conn.execute("""
-        SELECT st.user_id, u.username, u.display_name, u.role, u.password_hash
-        FROM session_token st
-        JOIN user u ON st.user_id = u.id
-        WHERE st.token = ? AND st.expires_at > ?
-    """, (token, datetime.now(timezone.utc).isoformat())).fetchone()
-    conn.close()
+    with get_raw_conn() as conn:
+        row = conn.execute(
+            text(
+                'SELECT st.user_id, u.username, u.display_name, u.role, u.password_hash '
+                'FROM session_token st '
+                'JOIN "user" u ON st.user_id = u.id '
+                "WHERE st.token = :token AND st.expires_at > :now"
+            ),
+            {"token": token, "now": datetime.now(timezone.utc).isoformat()},
+        ).fetchone()
 
     if row:
         return {
@@ -214,25 +188,21 @@ def require_login() -> dict:
             st.session_state.session_id = str(uuid.uuid4())[:12]
             # Load last visit from DB for "NEU" badges, then update to now
             if "_user_last_visit" not in st.session_state:
-                from datetime import datetime, timezone
-                import sqlite3
-                from src.config import DB_PATH
-                conn = sqlite3.connect(str(DB_PATH))
-                try:
+                with get_raw_conn() as _lv_conn:
                     # Read previous last_visit
-                    row = conn.execute(
-                        "SELECT timestamp FROM useractivity "
-                        "WHERE user_id = ? AND action = 'login' "
-                        "ORDER BY timestamp DESC LIMIT 1 OFFSET 1",
-                        (user["id"],),
+                    row = _lv_conn.execute(
+                        text(
+                            "SELECT timestamp FROM useractivity "
+                            "WHERE user_id = :uid AND action = 'login' "
+                            "ORDER BY timestamp DESC LIMIT 1 OFFSET 1"
+                        ),
+                        {"uid": user["id"]},
                     ).fetchone()
                     if row:
                         st.session_state["_user_last_visit"] = row[0][:19]
                     else:
                         # First ever login — show everything as new
                         st.session_state["_user_last_visit"] = "2020-01-01T00:00:00"
-                finally:
-                    conn.close()
             return user
 
     # Ensure session_id for tracking
@@ -535,21 +505,18 @@ def require_login() -> dict:
                     st.session_state.current_user_id = user["id"]
                     st.session_state.session_id = str(uuid.uuid4())[:12]
                     # Load last visit from DB for "NEU" badges
-                    import sqlite3 as _sq3
-                    from src.config import DB_PATH as _dbp
-                    _lv_conn = _sq3.connect(str(_dbp))
-                    try:
+                    with get_raw_conn() as _lv_conn:
                         _lv_row = _lv_conn.execute(
-                            "SELECT timestamp FROM useractivity "
-                            "WHERE user_id = ? AND action = 'login' "
-                            "ORDER BY timestamp DESC LIMIT 1",
-                            (user["id"],),
+                            text(
+                                "SELECT timestamp FROM useractivity "
+                                "WHERE user_id = :uid AND action = 'login' "
+                                "ORDER BY timestamp DESC LIMIT 1"
+                            ),
+                            {"uid": user["id"]},
                         ).fetchone()
                         st.session_state["_user_last_visit"] = (
                             _lv_row[0][:19] if _lv_row else "2020-01-01T00:00:00"
                         )
-                    finally:
-                        _lv_conn.close()
                     # Generate persistent session token (7 days)
                     token = _generate_session_token(user["id"])
                     st.query_params["session"] = token
@@ -660,12 +627,11 @@ def show_user_menu():
             _token = st.query_params.get("session")
             if _token:
                 try:
-                    import sqlite3
-                    from src.config import DB_PATH
-                    conn = sqlite3.connect(str(DB_PATH))
-                    conn.execute("DELETE FROM session_token WHERE token = ?", (_token,))
-                    conn.commit()
-                    conn.close()
+                    with get_raw_conn() as conn:
+                        conn.execute(
+                            text("DELETE FROM session_token WHERE token = :token"),
+                            {"token": _token},
+                        )
                 except Exception:
                     pass
                 st.query_params.clear()
@@ -681,9 +647,6 @@ def show_user_menu():
 
 def _render_password_change(user: dict):
     """Render inline password change form in sidebar."""
-    import sqlite3
-    from src.config import DB_PATH
-
     with st.sidebar.form("pw_change_form"):
         st.markdown("**Passwort ändern**")
         old_pw = st.text_input("Aktuelles Passwort", type="password", key="pw_old")
@@ -709,13 +672,11 @@ def _render_password_change(user: dict):
 
             # Update
             new_hash = _hash_password(new_pw)
-            conn = sqlite3.connect(str(DB_PATH))
-            conn.execute(
-                "UPDATE user SET password_hash = ? WHERE id = ?",
-                (new_hash, user["id"]),
-            )
-            conn.commit()
-            conn.close()
+            with get_raw_conn() as conn:
+                conn.execute(
+                    text('UPDATE "user" SET password_hash = :hash WHERE id = :uid'),
+                    {"hash": new_hash, "uid": user["id"]},
+                )
 
             track_activity("password_change")
             st.session_state["_show_pw_change"] = False
@@ -793,28 +754,25 @@ def is_admin() -> bool:
 def _save_theme_preference(user_id: int, theme: str):
     """Save theme preference to DB."""
     try:
-        import sqlite3, json
-        from datetime import datetime, timezone
-        from src.config import DB_PATH
+        import json
         now = datetime.now(timezone.utc).isoformat()
-        conn = sqlite3.connect(str(DB_PATH))
-        existing = conn.execute(
-            "SELECT id, profile_json FROM userprofile WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        if existing:
-            profile = json.loads(existing[1] or "{}")
-            profile["theme"] = theme
-            conn.execute(
-                "UPDATE userprofile SET profile_json = ?, updated_at = ? WHERE user_id = ?",
-                (json.dumps(profile), now, user_id),
-            )
-        else:
-            conn.execute(
-                "INSERT INTO userprofile (user_id, profile_json, updated_at) VALUES (?, ?, ?)",
-                (user_id, json.dumps({"theme": theme}), now),
-            )
-        conn.commit()
-        conn.close()
+        with get_raw_conn() as conn:
+            existing = conn.execute(
+                text("SELECT id, profile_json FROM userprofile WHERE user_id = :uid"),
+                {"uid": user_id},
+            ).fetchone()
+            if existing:
+                profile = json.loads(existing[1] or "{}")
+                profile["theme"] = theme
+                conn.execute(
+                    text("UPDATE userprofile SET profile_json = :pj, updated_at = :now WHERE user_id = :uid"),
+                    {"pj": json.dumps(profile), "now": now, "uid": user_id},
+                )
+            else:
+                conn.execute(
+                    text("INSERT INTO userprofile (user_id, profile_json, updated_at) VALUES (:uid, :pj, :now)"),
+                    {"uid": user_id, "pj": json.dumps({"theme": theme}), "now": now},
+                )
     except Exception:
         pass  # Never break the app for theme persistence
 
@@ -822,13 +780,12 @@ def _save_theme_preference(user_id: int, theme: str):
 def load_theme_preference(user_id: int) -> str:
     """Load theme preference from DB. Returns 'dark' as default."""
     try:
-        import sqlite3, json
-        from src.config import DB_PATH
-        conn = sqlite3.connect(str(DB_PATH))
-        row = conn.execute(
-            "SELECT profile_json FROM userprofile WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        conn.close()
+        import json
+        with get_raw_conn() as conn:
+            row = conn.execute(
+                text("SELECT profile_json FROM userprofile WHERE user_id = :uid"),
+                {"uid": user_id},
+            ).fetchone()
         if row:
             profile = json.loads(row[0] or "{}")
             return profile.get("theme", "dark")

@@ -105,8 +105,8 @@ def render_search(filters: dict):
                 _sel_ids = st.session_state.get("_search_selected_ids", set())
                 if _sel_ids:
                     st.markdown("---")
-                    import sqlite3 as _s3
-                    from src.config import DB_PATH as _dp
+                    from src.db import get_raw_conn
+                    from sqlalchemy import text as _txt
                     _uid = st.session_state.get("current_user_id", 0)
 
                     _ac1, _ac2 = st.columns([1, 2])
@@ -117,15 +117,12 @@ def render_search(filters: dict):
                             unsafe_allow_html=True,
                         )
                     with _ac2:
-                        _cc = _s3.connect(str(_dp))
-                        try:
+                        with get_raw_conn() as _cc:
                             _my_colls = _cc.execute(
-                                "SELECT id, name FROM collection WHERE user_id = ? "
-                                "AND status NOT IN ('published','veroeffentlicht') "
-                                "ORDER BY updated_at DESC", (_uid,)
+                                _txt("SELECT id, name FROM collection WHERE user_id = :uid "
+                                     "AND status NOT IN ('published','veroeffentlicht') "
+                                     "ORDER BY updated_at DESC"), {"uid": _uid}
                             ).fetchall()
-                        finally:
-                            _cc.close()
                         _coll_opts = [("0", "+ Neue Sammlung")] + [(str(c[0]), c[1]) for c in _my_colls]
                         _chosen = st.selectbox(
                             "Sammlung", _coll_opts,
@@ -145,36 +142,29 @@ def render_search(filters: dict):
 
                     if st.button("📁 Zur Sammlung hinzufügen", key="_search_add_to_coll",
                                  use_container_width=True):
-                        _cc2 = _s3.connect(str(_dp))
-                        _cc2.execute("BEGIN IMMEDIATE")
-                        try:
+                        from datetime import datetime as _dt, timezone as _tz
+                        _now = _dt.now(_tz.utc).isoformat()
+                        with get_raw_conn() as _cc2:
                             if _chosen[0] == "0":
                                 _coll_name = _new_coll_name.strip() or f"Recherche: {search_input[:40]}"
-                                _cc2.execute(
-                                    "INSERT INTO collection (user_id, name, status, created_at, updated_at) "
-                                    "VALUES (?, ?, 'recherche', datetime('now'), datetime('now'))",
-                                    (_uid, _coll_name),
-                                )
-                                _new_cid = _cc2.execute("SELECT last_insert_rowid()").fetchone()[0]
+                                _row = _cc2.execute(
+                                    _txt("INSERT INTO collection (user_id, name, status, created_at, updated_at) "
+                                         "VALUES (:uid, :name, 'recherche', :now, :now) RETURNING id"),
+                                    {"uid": _uid, "name": _coll_name, "now": _now},
+                                ).fetchone()
+                                _new_cid = _row[0]
                                 if not _new_cid or _new_cid == 0:
-                                    _cc2.rollback()
-                                    _cc2.close()
                                     st.error("Sammlung konnte nicht erstellt werden.")
                                     return
                             else:
                                 _new_cid = int(_chosen[0])
                             for _aid in _sel_ids:
                                 _cc2.execute(
-                                    "INSERT OR IGNORE INTO collectionarticle "
-                                    "(collection_id, article_id, added_at) VALUES (?, ?, datetime('now'))",
-                                    (_new_cid, _aid),
+                                    _txt("INSERT INTO collectionarticle "
+                                         "(collection_id, article_id, added_at) VALUES (:coll_id, :aid, :now) "
+                                         "ON CONFLICT DO NOTHING"),
+                                    {"coll_id": _new_cid, "aid": _aid, "now": _now},
                                 )
-                            _cc2.commit()
-                        except Exception:
-                            _cc2.rollback()
-                            raise
-                        finally:
-                            _cc2.close()
                         from components.auth import track_activity
                         track_activity("search_to_collection",
                                        f"coll={_new_cid},articles={len(_sel_ids)}")
@@ -719,35 +709,36 @@ def _save_watchlist(name: str, keywords_csv: str, specialty=None, min_score: flo
 @st.cache_data(ttl=3600, show_spinner=False)
 def _get_popular_topics() -> list[str]:
     """Get popular search topics from article specialties and frequent terms."""
-    import sqlite3
-    from src.config import DB_PATH
+    from src.db import get_raw_conn
+    from sqlalchemy import text
+    from datetime import date, timedelta
+    _cutoff_30d = (date.today() - timedelta(days=30)).isoformat()
 
-    conn = sqlite3.connect(str(DB_PATH))
-    try:
+    with get_raw_conn() as conn:
         # Top specialties
         specs = conn.execute(
-            "SELECT specialty, COUNT(*) as cnt FROM article "
-            "WHERE specialty IS NOT NULL AND specialty != '' "
-            "AND pub_date >= date('now', '-30 days') "
-            "GROUP BY specialty ORDER BY cnt DESC LIMIT 6"
+            text("SELECT specialty, COUNT(*) as cnt FROM article "
+                 "WHERE specialty IS NOT NULL AND specialty != '' "
+                 "AND pub_date >= :cutoff "
+                 "GROUP BY specialty ORDER BY cnt DESC LIMIT 6"),
+            {"cutoff": _cutoff_30d},
         ).fetchall()
 
         # Top journals
         journals = conn.execute(
-            "SELECT journal, COUNT(*) as cnt FROM article "
-            "WHERE journal IS NOT NULL AND journal != '' "
-            "AND pub_date >= date('now', '-30 days') "
-            "GROUP BY journal ORDER BY cnt DESC LIMIT 3"
+            text("SELECT journal, COUNT(*) as cnt FROM article "
+                 "WHERE journal IS NOT NULL AND journal != '' "
+                 "AND pub_date >= :cutoff "
+                 "GROUP BY journal ORDER BY cnt DESC LIMIT 3"),
+            {"cutoff": _cutoff_30d},
         ).fetchall()
 
         # Popular user searches
         searches = conn.execute(
-            "SELECT detail, COUNT(*) as cnt FROM useractivity "
-            "WHERE action = 'search' AND detail IS NOT NULL "
-            "GROUP BY detail ORDER BY cnt DESC LIMIT 5"
+            text("SELECT detail, COUNT(*) as cnt FROM useractivity "
+                 "WHERE action = 'search' AND detail IS NOT NULL "
+                 "GROUP BY detail ORDER BY cnt DESC LIMIT 5"),
         ).fetchall()
-    finally:
-        conn.close()
 
     topics = []
     for s in searches:
@@ -803,8 +794,8 @@ def _render_popular_topics():
 
 def _render_search_collection_bar(selected_ids: set):
     """Show action bar when articles are selected in search results."""
-    import sqlite3
-    from src.config import DB_PATH
+    from src.db import get_raw_conn
+    from sqlalchemy import text
 
     user_id = st.session_state.get("current_user_id", 0)
     count = len(selected_ids)
@@ -819,15 +810,12 @@ def _render_search_collection_bar(selected_ids: set):
     )
 
     # Get existing collections
-    conn = sqlite3.connect(str(DB_PATH))
-    try:
+    with get_raw_conn() as conn:
         colls = conn.execute(
-            "SELECT id, name FROM collection WHERE user_id = ? AND status != 'published' "
-            "ORDER BY created_at DESC",
-            (user_id,),
+            text("SELECT id, name FROM collection WHERE user_id = :uid AND status != 'published' "
+                 "ORDER BY created_at DESC"),
+            {"uid": user_id},
         ).fetchall()
-    finally:
-        conn.close()
 
     coll_options = {"0": "+ Neue Sammlung"}
     for cid, cname in colls:
@@ -844,20 +832,18 @@ def _render_search_collection_bar(selected_ids: set):
         )
     with c2:
         if st.button("📁 Hinzufügen", key="search_add_to_coll", use_container_width=True):
-            conn = sqlite3.connect(str(DB_PATH))
-            conn.execute("BEGIN IMMEDIATE")
-            try:
+            from datetime import datetime as _dt, timezone as _tz
+            _now = _dt.now(_tz.utc).isoformat()
+            with get_raw_conn() as conn:
                 if choice == "0":
                     # Create new collection
-                    conn.execute(
-                        "INSERT INTO collection (user_id, name, status, created_at, updated_at) "
-                        "VALUES (?, ?, 'research', datetime('now'), datetime('now'))",
-                        (user_id, f"Suche ({len(selected_ids)} Artikel)"),
-                    )
-                    coll_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                    _row = conn.execute(
+                        text("INSERT INTO collection (user_id, name, status, created_at, updated_at) "
+                             "VALUES (:uid, :name, 'research', :now, :now) RETURNING id"),
+                        {"uid": user_id, "name": f"Suche ({len(selected_ids)} Artikel)", "now": _now},
+                    ).fetchone()
+                    coll_id = _row[0]
                     if not coll_id or coll_id == 0:
-                        conn.rollback()
-                        conn.close()
                         st.error("Sammlung konnte nicht erstellt werden.")
                         return
                 else:
@@ -865,16 +851,10 @@ def _render_search_collection_bar(selected_ids: set):
 
                 for aid in selected_ids:
                     conn.execute(
-                        "INSERT OR IGNORE INTO collectionarticle (collection_id, article_id, added_at) "
-                        "VALUES (?, ?, datetime('now'))",
-                        (coll_id, aid),
+                        text("INSERT INTO collectionarticle (collection_id, article_id, added_at) "
+                             "VALUES (:coll_id, :aid, :now) ON CONFLICT DO NOTHING"),
+                        {"coll_id": coll_id, "aid": aid, "now": _now},
                     )
-                conn.commit()
-            except Exception:
-                conn.rollback()
-                raise
-            finally:
-                conn.close()
 
             st.session_state["_search_selected_ids"] = set()
             from components.auth import track_activity
@@ -889,23 +869,20 @@ def _render_search_collection_bar(selected_ids: set):
 
 def _render_recent_searches():
     """Show recent search terms as clickable chips."""
-    import sqlite3
-    from src.config import DB_PATH
+    from src.db import get_raw_conn
+    from sqlalchemy import text
 
     user_id = st.session_state.get("current_user_id", 0)
     if not user_id:
         return
 
-    conn = sqlite3.connect(str(DB_PATH))
-    try:
+    with get_raw_conn() as conn:
         rows = conn.execute(
-            "SELECT DISTINCT detail FROM useractivity "
-            "WHERE user_id = ? AND action = 'search' AND detail IS NOT NULL "
-            "ORDER BY timestamp DESC LIMIT 8",
-            (user_id,),
+            text("SELECT DISTINCT detail FROM useractivity "
+                 "WHERE user_id = :uid AND action = 'search' AND detail IS NOT NULL "
+                 "ORDER BY timestamp DESC LIMIT 8"),
+            {"uid": user_id},
         ).fetchall()
-    finally:
-        conn.close()
 
     if not rows:
         return
@@ -948,26 +925,27 @@ def _render_recent_searches():
 @st.cache_data(ttl=600, show_spinner=False)
 def _get_sparkline_counts(query: str) -> tuple:
     """Cached: weekly article counts for sparkline + previous period total."""
-    import sqlite3
-    from src.config import DB_PATH
-    conn = sqlite3.connect(str(DB_PATH))
-    try:
-        pat = f"%{query}%"
-        rows = conn.execute("""
-            SELECT strftime('%Y-%W', pub_date) as week, COUNT(*) as cnt
+    from src.db import get_raw_conn, is_sqlite
+    from sqlalchemy import text
+    from datetime import date, timedelta
+    _cutoff_90d = (date.today() - timedelta(days=90)).isoformat()
+    _cutoff_180d = (date.today() - timedelta(days=180)).isoformat()
+    _week_expr = "strftime('%Y-%W', pub_date)" if is_sqlite() else "TO_CHAR(pub_date, 'IYYY-IW')"
+    pat = f"%{query}%"
+    with get_raw_conn() as conn:
+        rows = conn.execute(text(f"""
+            SELECT {_week_expr} as week, COUNT(*) as cnt
             FROM article
-            WHERE (title LIKE ? OR abstract LIKE ? OR summary_de LIKE ?)
-              AND pub_date >= date('now', '-90 days')
+            WHERE (title ILIKE :pat OR abstract ILIKE :pat OR summary_de ILIKE :pat)
+              AND pub_date >= :cutoff_90
             GROUP BY week ORDER BY week
-        """, (pat, pat, pat)).fetchall()
-        prev_count = conn.execute("""
+        """), {"pat": pat, "cutoff_90": _cutoff_90d}).fetchall()
+        prev_count = conn.execute(text("""
             SELECT COUNT(*) FROM article
-            WHERE (title LIKE ? OR abstract LIKE ? OR summary_de LIKE ?)
-              AND pub_date >= date('now', '-180 days')
-              AND pub_date < date('now', '-90 days')
-        """, (pat, pat, pat)).fetchone()[0]
-    finally:
-        conn.close()
+            WHERE (title ILIKE :pat OR abstract ILIKE :pat OR summary_de ILIKE :pat)
+              AND pub_date >= :cutoff_180
+              AND pub_date < :cutoff_90
+        """), {"pat": pat, "cutoff_180": _cutoff_180d, "cutoff_90": _cutoff_90d}).fetchone()[0]
     return rows, prev_count
 
 

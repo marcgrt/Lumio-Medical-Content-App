@@ -122,25 +122,23 @@ def check_rate_limits() -> List[dict]:
 
 def check_summary_quality() -> dict:
     """Check how many recent articles have poor template summaries."""
-    import sqlite3
-    from src.config import DB_PATH
+    from src.db import get_raw_conn
+    from sqlalchemy import text
 
     result = {"status": "ok", "template_count": 0, "llm_count": 0, "total": 0}
     try:
-        conn = sqlite3.connect(str(DB_PATH))
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT
-                COUNT(*) as total,
-                SUM(CASE WHEN summary_de NOT LIKE '%PRAXIS:%' THEN 1 ELSE 0 END) as template_count
-            FROM article
-            WHERE created_at >= datetime('now', '-3 days') AND summary_de IS NOT NULL
-        """)
-        row = cur.fetchone()
+        _cutoff_3d = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+        with get_raw_conn() as conn:
+            row = conn.execute(text("""
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN summary_de NOT ILIKE '%PRAXIS:%' THEN 1 ELSE 0 END) as template_count
+                FROM article
+                WHERE created_at >= :cutoff AND summary_de IS NOT NULL
+            """), {"cutoff": _cutoff_3d}).fetchone()
         result["total"] = row[0] or 0
         result["template_count"] = row[1] or 0
         result["llm_count"] = result["total"] - result["template_count"]
-        conn.close()
 
         if result["total"] > 0:
             template_pct = result["template_count"] / result["total"] * 100
@@ -163,41 +161,44 @@ def check_summary_quality() -> dict:
 
 def check_database() -> dict:
     """Check DB health: row counts, integrity, freshness."""
-    import sqlite3
-    from src.config import DB_PATH
+    from src.db import get_raw_conn, is_sqlite
+    from sqlalchemy import text
 
     result = {"status": "ok", "errors": []}
 
     try:
-        conn = sqlite3.connect(str(DB_PATH))
-        cur = conn.cursor()
+        _cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        with get_raw_conn() as conn:
+            # Integrity
+            if is_sqlite():
+                integrity = conn.execute(text("PRAGMA integrity_check")).fetchone()[0]
+                if integrity != "ok":
+                    result["errors"].append(f"Integrity check failed: {integrity}")
+                    result["status"] = "fail"
+            else:
+                # PostgreSQL: simple connectivity check
+                conn.execute(text("SELECT 1"))
 
-        # Integrity
-        cur.execute("PRAGMA integrity_check")
-        integrity = cur.fetchone()[0]
-        if integrity != "ok":
-            result["errors"].append(f"Integrity check failed: {integrity}")
-            result["status"] = "fail"
+            # Row count
+            total = conn.execute(text("SELECT COUNT(*) FROM article")).fetchone()[0]
+            result["total_articles"] = total
 
-        # Row count
-        cur.execute("SELECT COUNT(*) FROM article")
-        total = cur.fetchone()[0]
-        result["total_articles"] = total
+            # Freshness: any articles in last 24h?
+            recent = conn.execute(
+                text("SELECT COUNT(*) FROM article WHERE created_at >= :cutoff"),
+                {"cutoff": _cutoff_24h},
+            ).fetchone()[0]
+            result["articles_last_24h"] = recent
+            if recent == 0:
+                result["errors"].append("No new articles in last 24h — pipeline may be stalled")
+                result["status"] = "warn"
 
-        # Freshness: any articles in last 24h?
-        cur.execute(
-            "SELECT COUNT(*) FROM article WHERE created_at >= datetime('now', '-24 hours')"
-        )
-        recent = cur.fetchone()[0]
-        result["articles_last_24h"] = recent
-        if recent == 0:
-            result["errors"].append("No new articles in last 24h — pipeline may be stalled")
-            result["status"] = "warn"
-
-        # DB size
-        result["db_size_mb"] = round(os.path.getsize(str(DB_PATH)) / 1024 / 1024, 1)
-
-        conn.close()
+        # DB size (only meaningful for SQLite)
+        if is_sqlite():
+            from src.config import DB_PATH
+            result["db_size_mb"] = round(os.path.getsize(str(DB_PATH)) / 1024 / 1024, 1)
+        else:
+            result["db_size_mb"] = None
     except Exception as e:
         result["status"] = "fail"
         result["errors"].append(str(e)[:200])
@@ -247,13 +248,12 @@ def check_pipeline_logs() -> dict:
 
     # Check freshness: when was the last successful import?
     try:
-        import sqlite3
-        from src.config import DB_PATH
-        conn = sqlite3.connect(str(DB_PATH))
-        last_import = conn.execute(
-            "SELECT created_at FROM article ORDER BY created_at DESC LIMIT 1"
-        ).fetchone()
-        conn.close()
+        from src.db import get_raw_conn
+        from sqlalchemy import text
+        with get_raw_conn() as conn:
+            last_import = conn.execute(
+                text("SELECT created_at FROM article ORDER BY created_at DESC LIMIT 1")
+            ).fetchone()
         if last_import:
             result["last_import"] = last_import[0][:19]
             last_dt = datetime.fromisoformat(last_import[0][:19])
@@ -401,8 +401,8 @@ def notify_admin(report: dict):
     if report["overall"] == "OK":
         return
 
-    import sqlite3
-    from src.config import DB_PATH
+    from src.db import get_raw_conn
+    from sqlalchemy import text
 
     # Collect all errors
     all_errors = []
@@ -425,25 +425,24 @@ def notify_admin(report: dict):
     message = f"⚠️ Health Check {report['overall']}: {' | '.join(all_errors[:3])}"
 
     try:
-        conn = sqlite3.connect(str(DB_PATH))
-        # Find admin user(s)
-        admins = conn.execute("SELECT id FROM user WHERE role = 'admin'").fetchall()
         now = datetime.now(timezone.utc).isoformat()
-        for (admin_id,) in admins:
-            # Avoid duplicate notifications (check last 6h)
-            existing = conn.execute(
-                "SELECT COUNT(*) FROM notification WHERE user_id = ? AND type = 'health_check' "
-                "AND created_at > datetime('now', '-6 hours')",
-                (admin_id,),
-            ).fetchone()[0]
-            if existing == 0:
-                conn.execute(
-                    "INSERT INTO notification (user_id, type, message, is_read, created_at) "
-                    "VALUES (?, 'health_check', ?, 0, ?)",
-                    (admin_id, message[:500], now),
-                )
-        conn.commit()
-        conn.close()
+        _cutoff_6h = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat()
+        with get_raw_conn() as conn:
+            # Find admin user(s)
+            admins = conn.execute(text("SELECT id FROM \"user\" WHERE role = 'admin'")).fetchall()
+            for (admin_id,) in admins:
+                # Avoid duplicate notifications (check last 6h)
+                existing = conn.execute(
+                    text("SELECT COUNT(*) FROM notification WHERE user_id = :uid AND type = 'health_check' "
+                         "AND created_at > :cutoff"),
+                    {"uid": admin_id, "cutoff": _cutoff_6h},
+                ).fetchone()[0]
+                if existing == 0:
+                    conn.execute(
+                        text("INSERT INTO notification (user_id, type, message, is_read, created_at) "
+                             "VALUES (:uid, 'health_check', :msg, 0, :now)"),
+                        {"uid": admin_id, "msg": message[:500], "now": now},
+                    )
         logger.info(f"Admin notification sent: {message[:80]}")
     except Exception as e:
         logger.warning(f"Failed to notify admin: {e}")

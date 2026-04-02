@@ -415,32 +415,31 @@ def archive_old_articles(days: int = 180, dry_run: bool = False) -> dict:
 
     Returns dict with counts.
     """
-    import sqlite3
-    from src.config import DB_PATH
+    from src.db import get_raw_conn
+    from sqlalchemy import text
 
-    conn = sqlite3.connect(str(DB_PATH))
-    try:
+    with get_raw_conn() as conn:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
 
         # Find candidates: old + status NEW or ALERT
-        candidates = conn.execute("""
+        candidates = conn.execute(text("""
             SELECT a.id FROM article a
-            WHERE a.pub_date < ?
+            WHERE a.pub_date < :cutoff
               AND a.status IN ('NEW', 'ALERT')
               AND a.id NOT IN (SELECT article_id FROM collectionarticle)
               AND a.id NOT IN (SELECT article_id FROM articlebookmark)
               AND (a.relevance_score IS NULL OR a.relevance_score < 80)
-              AND LOWER(COALESCE(a.study_type, '')) NOT LIKE '%leitlinie%'
-              AND LOWER(COALESCE(a.study_type, '')) NOT LIKE '%guideline%'
-              AND LOWER(COALESCE(a.highlight_tags, '')) NOT LIKE '%leitlinie%'
-        """, (cutoff,)).fetchall()
+              AND LOWER(COALESCE(a.study_type, '')) NOT ILIKE '%leitlinie%'
+              AND LOWER(COALESCE(a.study_type, '')) NOT ILIKE '%guideline%'
+              AND LOWER(COALESCE(a.highlight_tags, '')) NOT ILIKE '%leitlinie%'
+        """), {"cutoff": cutoff}).fetchall()
 
         candidate_ids = [r[0] for r in candidates]
 
         # Count protected articles for reporting
         total_old = conn.execute(
-            "SELECT COUNT(*) FROM article WHERE pub_date < ? AND status IN ('NEW', 'ALERT')",
-            (cutoff,),
+            text("SELECT COUNT(*) FROM article WHERE pub_date < :cutoff AND status IN ('NEW', 'ALERT')"),
+            {"cutoff": cutoff},
         ).fetchone()[0]
         protected = total_old - len(candidate_ids)
 
@@ -448,12 +447,12 @@ def archive_old_articles(days: int = 180, dry_run: bool = False) -> dict:
             # Archive in batches of 500
             for i in range(0, len(candidate_ids), 500):
                 batch = candidate_ids[i:i + 500]
-                placeholders = ",".join("?" * len(batch))
+                _params = {f"id_{j}": aid for j, aid in enumerate(batch)}
+                _in_clause = ", ".join(f":id_{j}" for j in range(len(batch)))
                 conn.execute(
-                    f"UPDATE article SET status = 'ARCHIVED' WHERE id IN ({placeholders})",
-                    batch,
+                    text(f"UPDATE article SET status = 'ARCHIVED' WHERE id IN ({_in_clause})"),
+                    _params,
                 )
-            conn.commit()
             # Clear caches
             get_articles.clear()
 
@@ -466,8 +465,6 @@ def archive_old_articles(days: int = 180, dry_run: bool = False) -> dict:
             "would_archive": len(candidate_ids),
             "dry_run": dry_run,
         }
-    finally:
-        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -481,30 +478,27 @@ def _get_current_user_id() -> int:
 
 def toggle_bookmark(article_id: int, user_id: Optional[int] = None) -> bool:
     """Toggle a personal bookmark (atomic). Returns True if now bookmarked."""
-    from src.config import DB_PATH
-    import sqlite3
+    from src.db import get_raw_conn
+    from sqlalchemy import text
+    from datetime import datetime as _dt, timezone as _tz
     if user_id is None:
         user_id = _get_current_user_id()
-    conn = sqlite3.connect(str(DB_PATH), timeout=10)
-    try:
+    with get_raw_conn() as conn:
         # Atomic: try to delete first; if no rows affected, insert
         deleted = conn.execute(
-            "DELETE FROM articlebookmark WHERE user_id = ? AND article_id = ?",
-            (user_id, article_id),
+            text("DELETE FROM articlebookmark WHERE user_id = :uid AND article_id = :aid"),
+            {"uid": user_id, "aid": article_id},
         ).rowcount
         if deleted:
-            conn.commit()
             return False
-        # No existing row — insert (IGNORE handles rare race with concurrent insert)
+        # No existing row — insert (ON CONFLICT handles rare race with concurrent insert)
+        _now = _dt.now(_tz.utc).isoformat()
         conn.execute(
-            "INSERT OR IGNORE INTO articlebookmark (user_id, article_id, created_at) "
-            "VALUES (?, ?, datetime('now'))",
-            (user_id, article_id),
+            text("INSERT INTO articlebookmark (user_id, article_id, created_at) "
+                 "VALUES (:uid, :aid, :now) ON CONFLICT DO NOTHING"),
+            {"uid": user_id, "aid": article_id, "now": _now},
         )
-        conn.commit()
         return True
-    finally:
-        conn.close()
 
 
 def is_bookmarked(article_id: int, user_id: Optional[int] = None) -> bool:
@@ -522,20 +516,17 @@ def is_bookmarked(article_id: int, user_id: Optional[int] = None) -> bool:
 
 
 def get_bookmarked_article_ids(user_id: Optional[int] = None) -> set[int]:
-    """Get all bookmarked article IDs for a user (raw SQLite for consistency)."""
-    import sqlite3
-    from src.config import DB_PATH
+    """Get all bookmarked article IDs for a user."""
+    from src.db import get_raw_conn
+    from sqlalchemy import text
     if user_id is None:
         user_id = _get_current_user_id()
-    conn = sqlite3.connect(str(DB_PATH))
-    try:
+    with get_raw_conn() as conn:
         rows = conn.execute(
-            "SELECT article_id FROM articlebookmark WHERE user_id = ?",
-            (user_id,),
+            text("SELECT article_id FROM articlebookmark WHERE user_id = :uid"),
+            {"uid": user_id},
         ).fetchall()
         return set(r[0] for r in rows)
-    finally:
-        conn.close()
 
 
 def get_bookmarked_articles(user_id: Optional[int] = None) -> list:

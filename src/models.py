@@ -15,6 +15,7 @@ from sqlmodel import SQLModel, Field, create_engine, Session
 from sqlalchemy import Index, event
 
 from src.config import DB_PATH
+from src.db import get_engine as _db_get_engine, get_session as _db_get_session, is_sqlite, is_postgres, get_raw_conn
 
 
 class Source(SQLModel, table=True):
@@ -69,6 +70,11 @@ class Article(SQLModel, table=True):
     summary_de: Optional[str] = None
     highlight_tags: Optional[str] = None  # pipe-separated relevance tags
     status: str = Field(default="NEW", index=True)  # NEW | APPROVED | REJECTED | SAVED | ALERT
+
+    # evidence quality signals
+    evidence_level: Optional[int] = None         # 1-5 evidence hierarchy
+    is_peer_reviewed: Optional[bool] = None
+    impact_tier: Optional[str] = None            # e.g. "high", "medium", "low"
 
     created_at: datetime = Field(default_factory=_utcnow)
     alert_acknowledged_at: Optional[datetime] = None
@@ -179,6 +185,46 @@ class UserActivity(SQLModel, table=True):
     timestamp: datetime = Field(default_factory=_utcnow)
 
 
+class User(SQLModel, table=True):
+    """Application user account."""
+
+    __table_args__ = {"extend_existing": True}
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(index=True, unique=True)
+    display_name: str
+    password_hash: str
+    role: str = Field(default="redakteur")
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class SessionToken(SQLModel, table=True):
+    """Browser session token for cookie-based authentication."""
+
+    __tablename__ = "session_token"
+    __table_args__ = {"extend_existing": True}
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True)
+    token: str = Field(index=True, unique=True)
+    expires_at: datetime
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class Notification(SQLModel, table=True):
+    """In-app notification for a user (e.g. assignment, comment)."""
+
+    __table_args__ = {"extend_existing": True}
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True)
+    type: str                                       # e.g. "assignment", "comment", "status_change"
+    message: str
+    link_collection_id: Optional[int] = None
+    is_read: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
 class Collection(SQLModel, table=True):
     """Recherche-Sammlung — ein Redakteur bündelt Artikel zu einem Thema."""
 
@@ -196,8 +242,31 @@ class Collection(SQLModel, table=True):
     target_platform: Optional[str] = None       # z.B. "esanum", "Ärzte Zeitung"
     target_date: Optional[date] = None          # Geplantes Veröffentlichungsdatum
     published_url: Optional[str] = None         # Link zum fertigen Artikel
+    assigned_to: Optional[int] = None           # user_id of assigned editor
+    draft_text: Optional[str] = None            # legacy single-draft text
+    draft_generated_at: Optional[datetime] = None
+    draft_generated_by: Optional[int] = None    # user_id who triggered generation
+    target_audience: Optional[str] = None       # e.g. "Fachärzte", "Allgemeinmediziner"
+    article_format: Optional[str] = None        # e.g. "Nachricht", "Hintergrundbericht"
+    target_length: Optional[str] = None         # e.g. "kurz", "mittel", "lang"
+    tonality: Optional[str] = None              # e.g. "sachlich", "meinungsstark"
+    key_message: Optional[str] = None           # zentrale Kernaussage
+    internal_notes: Optional[str] = None        # interne Redaktionsnotizen
+    deleted_at: Optional[datetime] = None       # soft-delete timestamp
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class CollectionComment(SQLModel, table=True):
+    """Comment on a collection by a team member."""
+
+    __table_args__ = {"extend_existing": True}
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    collection_id: int = Field(index=True)
+    user_id: int = Field(index=True)
+    text: str
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class CollectionArticle(SQLModel, table=True):
@@ -213,6 +282,23 @@ class CollectionArticle(SQLModel, table=True):
     article_id: int = Field(index=True)
     added_at: datetime = Field(default_factory=_utcnow)
     note: Optional[str] = None                  # optionale Notiz zum Artikel
+
+
+class CollectionDraft(SQLModel, table=True):
+    """Versioned AI-generated draft for a collection."""
+
+    __tablename__ = "collection_draft"
+    __table_args__ = {"extend_existing": True}
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    collection_id: int = Field(index=True)
+    version: int = Field(default=1)
+    draft_text: str
+    feedback_text: Optional[str] = None
+    generated_by_model: Optional[str] = None     # e.g. "gpt-4o", "claude-3.5-sonnet"
+    generated_by_user: Optional[int] = None      # user_id who triggered generation
+    generated_at: datetime = Field(default_factory=_utcnow)
+    is_active: bool = Field(default=True)
 
 
 class TrendCache(SQLModel, table=True):
@@ -279,7 +365,7 @@ class EditorialTopic(SQLModel, table=True):
 # Engine helper
 # ---------------------------------------------------------------------------
 
-_engine = None
+_engine = _db_get_engine()
 
 
 # Mapping: source name fragment (lowercase) → source_category
@@ -362,7 +448,10 @@ def _backfill_source_category(cursor, conn):
 
 
 def _migrate_db():
-    """Add columns that don't exist yet (lightweight migration)."""
+    """Add columns that don't exist yet (lightweight migration, SQLite only)."""
+    if not is_sqlite():
+        logger.info("Skipping SQLite migration — running on PostgreSQL")
+        return
     import sqlite3
     conn = sqlite3.connect(str(DB_PATH))
     try:
@@ -408,30 +497,26 @@ def _migrate_db():
 
 
 def get_engine():
+    """Return the shared engine (delegated to src.db)."""
     global _engine
     if _engine is None:
+        _engine = _db_get_engine()
+    if is_sqlite():
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
-
-        # Enable WAL mode for better concurrent reads
-        @event.listens_for(_engine, "connect")
-        def _set_sqlite_pragma(dbapi_conn, _connection_record):
-            cursor = dbapi_conn.cursor()
-            cursor.execute("PRAGMA journal_mode=WAL")
-            cursor.execute("PRAGMA busy_timeout=5000")
-            cursor.close()
-
-        SQLModel.metadata.create_all(_engine)
-        _migrate_db()
+    SQLModel.metadata.create_all(_engine)
+    _migrate_db()
     return _engine
 
 
 def get_session() -> Session:
-    return Session(get_engine())
+    """Return a new SQLModel Session (delegated to src.db)."""
+    # Ensure tables are created on first call
+    get_engine()
+    return _db_get_session()
 
 
 # ---------------------------------------------------------------------------
-# FTS5 Full-Text Search
+# FTS Full-Text Search (dual-mode: SQLite FTS5 / PostgreSQL tsvector)
 # ---------------------------------------------------------------------------
 
 _FTS5_COLUMNS = (
@@ -439,9 +524,67 @@ _FTS5_COLUMNS = (
     "authors", "journal", "mesh_terms", "specialty", "source",
 )
 
+# PostgreSQL tsvector expression — weighted to match FTS5 column order.
+# Uses 'simple' config (not 'german') because content is mixed DE/EN.
+# 'simple' does no stemming but tokenizes properly, avoiding issues with
+# German compound words.
+_PG_SEARCH_VECTOR_EXPR = (
+    "setweight(to_tsvector('simple', COALESCE(title, '')), 'A') || "
+    "setweight(to_tsvector('simple', COALESCE(summary_de, '')), 'A') || "
+    "setweight(to_tsvector('simple', COALESCE(abstract, '')), 'B') || "
+    "setweight(to_tsvector('simple', COALESCE(highlight_tags, '')), 'B') || "
+    "setweight(to_tsvector('simple', COALESCE(authors, '')), 'C') || "
+    "setweight(to_tsvector('simple', COALESCE(journal, '')), 'C') || "
+    "setweight(to_tsvector('simple', COALESCE(mesh_terms, '')), 'C') || "
+    "setweight(to_tsvector('simple', COALESCE(specialty, '')), 'C') || "
+    "setweight(to_tsvector('simple', COALESCE(source, '')), 'D')"
+)
+
+
+def _fts5_to_tsquery(query: str) -> str:
+    """Convert an FTS5-style query to a PostgreSQL tsquery string.
+
+    Handles:
+      - OR → |
+      - Quoted phrases "heart failure" → 'heart' & 'failure' (AND within phrase)
+      - Bare terms stay as-is, joined by |
+    """
+    import re
+    tokens = []
+    # Extract quoted phrases first
+    remainder = query
+    for match in re.finditer(r'"([^"]+)"', query):
+        phrase = match.group(1).strip()
+        if phrase:
+            words = phrase.split()
+            tokens.append(" & ".join(words))
+        remainder = remainder.replace(match.group(0), " ")
+
+    # Process remaining (non-quoted) text
+    for part in remainder.split():
+        if part.upper() == "OR":
+            continue
+        word = part.strip()
+        if word:
+            tokens.append(word)
+
+    if not tokens:
+        return ""
+    return " | ".join(tokens)
+
+
+# --- init ---
 
 def init_fts5():
-    """Create FTS5 virtual table if it doesn't exist. Idempotent.
+    """Create FTS infrastructure. Idempotent. Delegates to backend-specific init."""
+    if is_postgres():
+        _init_fts_postgres()
+    else:
+        _init_fts_sqlite()
+
+
+def _init_fts_sqlite():
+    """Create FTS5 virtual table if it doesn't exist (SQLite).
 
     Drops and recreates if the column set has changed.
     """
@@ -475,6 +618,56 @@ def init_fts5():
     create_fts5_triggers()
 
 
+def _init_fts_postgres():
+    """Add search_vector tsvector column, GIN index, and trigger (PostgreSQL).
+
+    Idempotent — all DDL uses IF NOT EXISTS or CREATE OR REPLACE.
+    """
+    from sqlalchemy import text as sa_text
+    with get_raw_conn() as conn:
+        # 1. Add column if not exists
+        conn.execute(sa_text(
+            "ALTER TABLE article ADD COLUMN IF NOT EXISTS "
+            "search_vector tsvector"
+        ))
+        # 2. GIN index
+        conn.execute(sa_text(
+            "CREATE INDEX IF NOT EXISTS ix_article_search_vector "
+            "ON article USING GIN(search_vector)"
+        ))
+        # 3. Trigger function
+        conn.execute(sa_text("""
+            CREATE OR REPLACE FUNCTION article_search_vector_update()
+            RETURNS trigger AS $$
+            BEGIN
+              NEW.search_vector :=
+                setweight(to_tsvector('simple', COALESCE(NEW.title, '')), 'A') ||
+                setweight(to_tsvector('simple', COALESCE(NEW.summary_de, '')), 'A') ||
+                setweight(to_tsvector('simple', COALESCE(NEW.abstract, '')), 'B') ||
+                setweight(to_tsvector('simple', COALESCE(NEW.highlight_tags, '')), 'B') ||
+                setweight(to_tsvector('simple', COALESCE(NEW.authors, '')), 'C') ||
+                setweight(to_tsvector('simple', COALESCE(NEW.journal, '')), 'C') ||
+                setweight(to_tsvector('simple', COALESCE(NEW.mesh_terms, '')), 'C') ||
+                setweight(to_tsvector('simple', COALESCE(NEW.specialty, '')), 'C') ||
+                setweight(to_tsvector('simple', COALESCE(NEW.source, '')), 'D');
+              RETURN NEW;
+            END $$ LANGUAGE plpgsql;
+        """))
+        # 4. Trigger (drop + create for idempotency — CREATE OR REPLACE not
+        #    available for triggers in older PG versions)
+        conn.execute(sa_text(
+            "DROP TRIGGER IF EXISTS trg_article_search_vector ON article"
+        ))
+        conn.execute(sa_text(
+            "CREATE TRIGGER trg_article_search_vector "
+            "BEFORE INSERT OR UPDATE ON article "
+            "FOR EACH ROW EXECUTE FUNCTION article_search_vector_update()"
+        ))
+    logger.info("PostgreSQL tsvector search initialised")
+
+
+# --- triggers (SQLite only) ---
+
 def create_fts5_triggers():
     """Create SQLite triggers to keep article_fts in sync with the article table.
 
@@ -483,7 +676,10 @@ def create_fts5_triggers():
     the new values.
 
     All triggers use CREATE TRIGGER IF NOT EXISTS for idempotency.
+    SQLite-only; on PostgreSQL the DB trigger handles sync automatically.
     """
+    if is_postgres():
+        return
     import sqlite3
 
     cols = ", ".join(_FTS5_COLUMNS)
@@ -532,8 +728,18 @@ def create_fts5_triggers():
         conn.close()
 
 
+# --- populate ---
+
 def populate_fts5():
-    """Populate/rebuild the FTS5 index from the article table. Idempotent.
+    """Populate/rebuild the FTS index. Idempotent. Works on both backends."""
+    if is_postgres():
+        _populate_fts_postgres()
+    else:
+        _populate_fts_sqlite()
+
+
+def _populate_fts_sqlite():
+    """Populate/rebuild the FTS5 index from the article table (SQLite).
 
     With external-content FTS5, SELECT count(*) reads the content table,
     so we probe the actual inverted index with a MATCH query instead.
@@ -570,12 +776,34 @@ def populate_fts5():
         conn.close()
 
 
-def fts5_search(query: str, limit: int = 500) -> list:
-    """Search articles using FTS5. Returns article IDs ordered by BM25 rank.
+def _populate_fts_postgres():
+    """Backfill search_vector for rows where it is NULL (PostgreSQL)."""
+    from sqlalchemy import text as sa_text
+    with get_raw_conn() as conn:
+        result = conn.execute(sa_text(
+            f"UPDATE article SET search_vector = {_PG_SEARCH_VECTOR_EXPR} "
+            "WHERE search_vector IS NULL"
+        ))
+        if result.rowcount:
+            logger.info("Backfilled search_vector for %d articles", result.rowcount)
 
-    Returns empty list if FTS5 table doesn't exist or query is invalid
+
+# --- search ---
+
+def fts5_search(query: str, limit: int = 500) -> list:
+    """Search articles. Uses FTS5 on SQLite, tsvector on PostgreSQL.
+
+    Returns article IDs ordered by relevance rank.
+    Returns empty list if index doesn't exist or query is invalid
     (graceful fallback to ILIKE in caller).
     """
+    if is_postgres():
+        return _fts_search_postgres(query, limit)
+    return _fts_search_sqlite(query, limit)
+
+
+def _fts_search_sqlite(query: str, limit: int = 500) -> list:
+    """Search articles using FTS5 (SQLite). Returns article IDs ordered by BM25."""
     import sqlite3
     conn = sqlite3.connect(str(DB_PATH))
     try:
@@ -598,3 +826,23 @@ def fts5_search(query: str, limit: int = 500) -> list:
             return []
     finally:
         conn.close()
+
+
+def _fts_search_postgres(query: str, limit: int = 500) -> list:
+    """Search articles using tsvector (PostgreSQL). Returns article IDs ordered by ts_rank_cd."""
+    tsquery = _fts5_to_tsquery(query)
+    if not tsquery:
+        return []
+    from sqlalchemy import text as sa_text
+    try:
+        with get_raw_conn() as conn:
+            rows = conn.execute(sa_text(
+                "SELECT id FROM article "
+                "WHERE search_vector @@ to_tsquery('simple', :q) "
+                "ORDER BY ts_rank_cd(search_vector, to_tsquery('simple', :q)) DESC "
+                "LIMIT :lim"
+            ), {"q": tsquery, "lim": limit}).fetchall()
+            return [r[0] for r in rows]
+    except Exception as exc:
+        logger.warning("PostgreSQL FTS search failed: %s", exc)
+        return []

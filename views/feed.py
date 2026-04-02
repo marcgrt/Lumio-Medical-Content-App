@@ -25,20 +25,20 @@ def _load_article_collection_map(article_ids: tuple):
     if not article_ids:
         st.session_state["_article_collection_map"] = {}
         return
-    import sqlite3
-    from src.config import DB_PATH
-    conn = sqlite3.connect(str(DB_PATH))
-    try:
+    from src.db import get_raw_conn
+    from sqlalchemy import text
+    # Build named params for IN clause
+    _params = {f"id_{i}": aid for i, aid in enumerate(article_ids)}
+    _in_clause = ", ".join(f":id_{i}" for i in range(len(article_ids)))
+    with get_raw_conn() as conn:
         rows = conn.execute(
-            f"""SELECT ca.article_id, c.name, c.status
+            text(f"""SELECT ca.article_id, c.name, c.status
                 FROM collectionarticle ca
                 JOIN collection c ON c.id = ca.collection_id
-                WHERE ca.article_id IN ({','.join('?' * len(article_ids))})
-                ORDER BY c.updated_at DESC""",
-            list(article_ids),
+                WHERE ca.article_id IN ({_in_clause})
+                ORDER BY c.updated_at DESC"""),
+            _params,
         ).fetchall()
-    finally:
-        conn.close()
     # Keep first (most recent) collection per article
     coll_map = {}
     for aid, cname, cstatus in rows:
@@ -63,43 +63,45 @@ def render_feed(filters: dict):
     _dkpi = get_dashboard_kpis()
 
     # Personal KPIs from DB
-    import sqlite3 as _kpi_sql
-    from src.config import DB_PATH as _kpi_db
+    from src.db import get_raw_conn
+    from sqlalchemy import text
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
     _uid = st.session_state.get("current_user_id", 0)
-    _kpi_conn = _kpi_sql.connect(str(_kpi_db))
-    try:
+    _cutoff_48h = (_dt.now(_tz.utc) - _td(hours=48)).isoformat()
+    _cutoff_2d = (date.today() - _td(days=2)).isoformat()
+    with get_raw_conn() as _kpi_conn:
         # Neu (letzte 48h nach pub_date)
         _new_recent = _kpi_conn.execute(
-            "SELECT COUNT(*) FROM article WHERE created_at >= datetime('now', '-48 hours') AND status != 'ARCHIVED'"
+            text("SELECT COUNT(*) FROM article WHERE created_at >= :cutoff AND status != 'ARCHIVED'"),
+            {"cutoff": _cutoff_48h},
         ).fetchone()[0]
         # Fallback: wenn kein Import in 48h, zeige letzte 7 Tage
         if _new_recent == 0:
             _new_recent = _kpi_conn.execute(
-                "SELECT COUNT(*) FROM article WHERE pub_date >= date('now', '-2 days') AND status != 'ARCHIVED'"
+                text("SELECT COUNT(*) FROM article WHERE pub_date >= :cutoff AND status != 'ARCHIVED'"),
+                {"cutoff": _cutoff_2d},
             ).fetchone()[0]
         _new_label = "seit 48h"
 
         # Meine Sammlungen (offen)
         _my_colls = _kpi_conn.execute(
-            "SELECT COUNT(*) FROM collection WHERE (user_id = ? OR assigned_to = ?) "
-            "AND status NOT IN ('veroeffentlicht', 'verworfen') AND deleted_at IS NULL",
-            (_uid, _uid),
+            text("SELECT COUNT(*) FROM collection WHERE (user_id = :uid OR assigned_to = :uid) "
+                 "AND status NOT IN ('veroeffentlicht', 'verworfen') AND deleted_at IS NULL"),
+            {"uid": _uid},
         ).fetchone()[0]
 
         # Zugewiesen an mich (von anderen erstellt)
         _assigned = _kpi_conn.execute(
-            "SELECT COUNT(*) FROM collection WHERE assigned_to = ? AND user_id != ? "
-            "AND status NOT IN ('veroeffentlicht', 'verworfen') AND deleted_at IS NULL",
-            (_uid, _uid),
+            text("SELECT COUNT(*) FROM collection WHERE assigned_to = :uid AND user_id != :uid "
+                 "AND status NOT IN ('veroeffentlicht', 'verworfen') AND deleted_at IS NULL"),
+            {"uid": _uid},
         ).fetchone()[0]
 
         # Ungelesene Kommentare / Notifications
         _unread = _kpi_conn.execute(
-            "SELECT COUNT(*) FROM notification WHERE user_id = ? AND is_read = 0",
-            (_uid,),
+            text("SELECT COUNT(*) FROM notification WHERE user_id = :uid AND is_read = 0"),
+            {"uid": _uid},
         ).fetchone()[0]
-    finally:
-        _kpi_conn.close()
 
     st.markdown(f"""
     <div class="dash-bar">
@@ -136,32 +138,33 @@ def render_feed(filters: dict):
     # -- TODAY'S HIGHLIGHTS (data-driven, no LLM tokens) --
     @st.cache_data(ttl=300, show_spinner=False)
     def _get_today_highlights():
-        import sqlite3
-        from src.config import DB_PATH
-        conn = sqlite3.connect(str(DB_PATH))
-        try:
+        from src.db import get_raw_conn
+        from sqlalchemy import text
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        _cutoff_48h = (_dt.now(_tz.utc) - _td(hours=48)).isoformat()
+        _cutoff_24h = (_dt.now(_tz.utc) - _td(hours=24)).isoformat()
+        with get_raw_conn() as conn:
             # Top 5 articles from last 48h by score
-            top = conn.execute("""
+            top = conn.execute(text("""
                 SELECT title, relevance_score, specialty, journal
                 FROM article
-                WHERE created_at >= datetime('now', '-48 hours')
+                WHERE created_at >= :cutoff_48h
                   AND relevance_score >= 60
                 ORDER BY relevance_score DESC
                 LIMIT 5
-            """).fetchall()
+            """), {"cutoff_48h": _cutoff_48h}).fetchall()
             # Count new articles today
             today_count = conn.execute(
-                "SELECT COUNT(*) FROM article WHERE created_at >= datetime('now', '-24 hours')"
+                text("SELECT COUNT(*) FROM article WHERE created_at >= :cutoff_24h"),
+                {"cutoff_24h": _cutoff_24h},
             ).fetchone()[0]
             # Top specialty today
-            top_spec = conn.execute("""
+            top_spec = conn.execute(text("""
                 SELECT specialty, COUNT(*) as cnt FROM article
-                WHERE created_at >= datetime('now', '-48 hours')
+                WHERE created_at >= :cutoff_48h
                   AND specialty IS NOT NULL AND specialty != ''
                 GROUP BY specialty ORDER BY cnt DESC LIMIT 1
-            """).fetchone()
-        finally:
-            conn.close()
+            """), {"cutoff_48h": _cutoff_48h}).fetchone()
         return top, today_count, top_spec
 
     _highlights, _today_n, _top_spec = _get_today_highlights()
@@ -526,35 +529,29 @@ def render_feed(filters: dict):
                     if _new_name and _new_name.strip():
                         # Create new collection + add articles in a single transaction
                         from datetime import datetime as _dt, timezone as _tz
-                        import sqlite3 as _sql
-                        from src.config import DB_PATH as _dbp
+                        from src.db import get_raw_conn
+                        from sqlalchemy import text as _text
                         _now = _dt.now(_tz.utc).isoformat()
                         _uid = st.session_state.get("current_user_id", 0)
-                        _conn = _sql.connect(str(_dbp))
-                        _conn.execute("BEGIN IMMEDIATE")
-                        try:
-                            _conn.execute(
-                                "INSERT INTO collection (user_id, name, status, created_at, updated_at) VALUES (?, ?, 'recherche', ?, ?)",
-                                (_uid, _new_name.strip(), _now, _now),
-                            )
-                            _new_coll_id = _conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                        with get_raw_conn() as _conn:
+                            _row = _conn.execute(
+                                _text("INSERT INTO collection (user_id, name, status, created_at, updated_at) "
+                                      "VALUES (:uid, :name, 'recherche', :now, :now) RETURNING id"),
+                                {"uid": _uid, "name": _new_name.strip(), "now": _now},
+                            ).fetchone()
+                            _new_coll_id = _row[0]
                             _added = 0
                             for _aid in st.session_state.selected_articles:
                                 _conn.execute(
-                                    "INSERT OR IGNORE INTO collectionarticle (collection_id, article_id, added_at) VALUES (?, ?, ?)",
-                                    (_new_coll_id, _aid, _now),
+                                    _text("INSERT INTO collectionarticle (collection_id, article_id, added_at) "
+                                          "VALUES (:coll_id, :aid, :now) ON CONFLICT DO NOTHING"),
+                                    {"coll_id": _new_coll_id, "aid": _aid, "now": _now},
                                 )
                                 _added += 1
                             _conn.execute(
-                                "UPDATE collection SET updated_at = ? WHERE id = ?",
-                                (_now, _new_coll_id),
+                                _text("UPDATE collection SET updated_at = :now WHERE id = :cid"),
+                                {"now": _now, "cid": _new_coll_id},
                             )
-                            _conn.commit()
-                        except Exception:
-                            _conn.rollback()
-                            raise
-                        finally:
-                            _conn.close()
                         _track("collection_create", f"name={_new_name.strip()}")
                         _track("collection_bulk_add", f"collection={_new_coll_id} added={_added}")
                         st.session_state.pop("_show_collection_picker", None)
