@@ -245,15 +245,59 @@ def load_congresses(with_articles: bool = True) -> list[Congress]:
                 description_de=item.get("description_de", ""),
                 keywords=item.get("keywords", []),
             )
-            if with_articles:
-                c.related_article_count = _count_related_articles(c.keywords)
             congresses.append(c)
         except Exception as exc:
             logger.warning("Skipping congress entry: %s", exc)
             continue
 
+    # Batch-count related articles (1 query instead of N)
+    if with_articles:
+        _batch_count_related_articles(congresses)
+
     congresses.sort(key=lambda c: c.date_start)
     return congresses
+
+
+def _batch_count_related_articles(congresses: list) -> None:
+    """Count related articles for all congresses in a single DB query."""
+    cutoff = date.today() - timedelta(days=60)
+    try:
+        with get_session() as session:
+            from sqlalchemy import or_
+            # Collect ALL keywords from all congresses
+            all_conditions = []
+            for c in congresses:
+                kws = c.keywords[:4] if c.keywords else []
+                for kw in kws:
+                    all_conditions.append(Article.title.ilike(f"%{kw}%"))
+
+            if not all_conditions:
+                for c in congresses:
+                    c.related_article_count = 0
+                return
+
+            # Get all matching article IDs + titles in one query
+            matching = session.exec(
+                select(Article.id, Article.title)
+                .where(Article.pub_date >= cutoff, or_(*all_conditions))
+            ).all()
+
+            # Build a title lookup for per-congress counting
+            for c in congresses:
+                kws = [kw.lower() for kw in (c.keywords[:4] if c.keywords else [])]
+                if not kws:
+                    c.related_article_count = 0
+                    continue
+                count = 0
+                for aid, title in matching:
+                    t = (title or "").lower()
+                    if any(kw in t for kw in kws):
+                        count += 1
+                c.related_article_count = count
+    except Exception as exc:
+        logger.debug("Batch article count failed: %s", exc)
+        for c in congresses:
+            c.related_article_count = 0
 
 
 def get_next_congress(congresses: list[Congress]) -> Optional[Congress]:
