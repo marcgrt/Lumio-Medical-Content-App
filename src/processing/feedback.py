@@ -16,7 +16,7 @@ import json
 import logging
 from typing import Dict, List, Optional, Tuple
 
-from sqlmodel import col, select
+from sqlmodel import col, func, select
 
 from src.config import DB_PATH
 from src.models import Article, get_engine, get_session
@@ -33,6 +33,11 @@ FEEDBACK_MAX_EXAMPLES = 3
 # Only use articles with clear signal (high-score approved, low-score rejected)
 FEEDBACK_APPROVED_MIN_SCORE = 60
 FEEDBACK_REJECTED_MAX_SCORE = 80
+
+# v2 feedback thresholds (only active when _v2_ready() returns True)
+FEEDBACK_V2_MIN_ARTICLES = 30
+FEEDBACK_V2_APPROVED_MIN_SCORE = 60
+FEEDBACK_V2_REJECTED_MAX_SCORE = 55
 
 
 def get_feedback_examples() -> Optional[Dict[str, list]]:
@@ -265,4 +270,73 @@ def _example_to_ideal_score(example: dict, approved: bool) -> dict:
         "begr_neuigkeitswert": reason,
         "begr_zielgruppen_fit": reason,
         "begr_quellenqualitaet": reason,
+    }
+
+
+# ---------------------------------------------------------------------------
+# v2 feedback support
+# ---------------------------------------------------------------------------
+
+def _v2_ready() -> bool:
+    """Check if enough v2-scored articles have been approved/rejected.
+
+    Returns True when >30 v2-scored articles have editorial decisions,
+    enabling v2-specific feedback examples in the scoring prompt.
+    """
+    get_engine()
+    with get_session() as session:
+        v2_decided = session.exec(
+            select(func.count(Article.id)).where(
+                Article.scoring_version == "v2",
+                Article.status.in_(["APPROVED", "REJECTED"]),  # type: ignore[union-attr]
+            )
+        ).one()
+    return v2_decided > FEEDBACK_V2_MIN_ARTICLES
+
+
+def get_v2_feedback_examples() -> Optional[Dict[str, list]]:
+    """Get feedback examples specifically from v2-scored articles.
+
+    Returns None if not enough v2 decisions yet (falls back to calibration
+    anchors in the prompt). When ready, uses v2 thresholds:
+    approved >= 60, rejected < 55.
+    """
+    if not _v2_ready():
+        logger.debug("v2 feedback not ready yet (need >%d v2 decisions)", FEEDBACK_V2_MIN_ARTICLES)
+        return None
+
+    get_engine()
+    with get_session() as session:
+        approved = session.exec(
+            select(Article)
+            .where(
+                Article.scoring_version == "v2",
+                Article.status == "APPROVED",
+                Article.relevance_score >= FEEDBACK_V2_APPROVED_MIN_SCORE,
+            )
+            .order_by(col(Article.relevance_score).desc())
+            .limit(FEEDBACK_MAX_EXAMPLES)
+        ).all()
+
+        rejected = session.exec(
+            select(Article)
+            .where(
+                Article.scoring_version == "v2",
+                Article.status == "REJECTED",
+                Article.relevance_score < FEEDBACK_V2_REJECTED_MAX_SCORE,
+            )
+            .order_by(col(Article.relevance_score).asc())
+            .limit(FEEDBACK_MAX_EXAMPLES)
+        ).all()
+
+    if not approved and not rejected:
+        return None
+
+    return {
+        "approved": [_article_to_example(a) for a in approved],
+        "rejected": [_article_to_example(a) for a in rejected],
+        "stats": {
+            "total_approved": len(approved),
+            "total_rejected": len(rejected),
+        },
     }

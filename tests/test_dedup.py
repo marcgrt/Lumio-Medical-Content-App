@@ -3,7 +3,7 @@
 import pytest
 
 from src.models import Article
-from src.processing.dedup import deduplicate, _normalize_title, _levenshtein
+from src.processing.dedup import deduplicate, _normalize_title, _similarity_ratio
 
 
 def _make_article(**kwargs) -> Article:
@@ -132,16 +132,16 @@ class TestNormalizeTitle:
         assert "u" in result  # umlaut stripped
 
 
-class TestLevenshtein:
+class TestSimilarityRatio:
     def test_identical(self):
-        assert _levenshtein("abc", "abc") == 0
+        assert _similarity_ratio("abc", "abc") == 1.0
 
-    def test_one_edit(self):
-        assert _levenshtein("abc", "ab") == 1
+    def test_similar(self):
+        assert _similarity_ratio("abc", "ab") > 0.6
 
     def test_completely_different(self):
-        assert _levenshtein("abc", "xyz") == 3
+        assert _similarity_ratio("abc", "xyz") < 0.5
 
     def test_empty_strings(self):
-        assert _levenshtein("", "") == 0
-        assert _levenshtein("abc", "") == 3
+        assert _similarity_ratio("", "") == 1.0
+        assert _similarity_ratio("abc", "") == 0.0

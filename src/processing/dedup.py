@@ -3,6 +3,7 @@
 import logging
 import re
 import unicodedata
+from difflib import SequenceMatcher
 
 from src.models import Article
 
@@ -22,69 +23,80 @@ def _normalize_title(title: str) -> str:
     return title
 
 
-def _levenshtein(s1: str, s2: str) -> int:
-    """Simple Levenshtein distance (optimised for short-circuit)."""
-    if s1 == s2:
-        return 0
-    len1, len2 = len(s1), len(s2)
-    if abs(len1 - len2) > 10:  # can't be < threshold anyway
-        return abs(len1 - len2)
+def _similarity_ratio(s1: str, s2: str) -> float:
+    """Compute similarity ratio between two strings (0.0–1.0).
 
-    # Two-row DP
-    prev = list(range(len2 + 1))
-    curr = [0] * (len2 + 1)
-    for i in range(1, len1 + 1):
-        curr[0] = i
-        for j in range(1, len2 + 1):
-            cost = 0 if s1[i - 1] == s2[j - 1] else 1
-            curr[j] = min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost)
-        prev, curr = curr, prev
-    return prev[len2]
+    Uses SequenceMatcher which is fast for short strings and gives a ratio
+    that's easier to reason about than raw Levenshtein distance.
+    Quick reject if lengths differ by more than 50%.
+    """
+    if s1 == s2:
+        return 1.0
+    len1, len2 = len(s1), len(s2)
+    if len1 == 0 or len2 == 0:
+        return 0.0
+    # Quick reject: very different lengths can't be >85% similar
+    if min(len1, len2) / max(len1, len2) < 0.5:
+        return 0.0
+    return SequenceMatcher(None, s1, s2).ratio()
 
 
 def deduplicate(articles: list[Article], cosine_threshold: float = 0.92) -> list[Article]:
     """Remove duplicate articles using DOI match and title similarity.
 
-    Pass 1: Exact DOI match
-    Pass 2: Normalized title Levenshtein distance < 5
-    Pass 3: (Sentence-Transformers cosine similarity — optional, only if installed)
+    Pass 1: Exact DOI match (same DOI = duplicate, keep first)
+    Pass 2: Normalized title similarity (>85% SequenceMatcher ratio)
+    Pass 3: (Sentence-Transformers cosine similarity — optional)
+
+    IMPORTANT: A primary study (NEJM) and a commentary/summary about it
+    (Medscape, Ärzteblatt) are NOT duplicates — they have different titles,
+    abstracts, and editorial value. The dedup only catches the same article
+    arriving through multiple feeds.
     """
     if not articles:
         return articles
 
     unique: list[Article] = []
     seen_dois: set[str] = set()
-    seen_titles: list[str] = []
+    seen_titles: list[tuple[str, Article]] = []
 
     # Pass 1 + 2: DOI and title
     for article in articles:
-        # Pass 1: DOI
+        # Pass 1: DOI — exact match only
         doi = (article.doi or "").strip().lower()
         if doi:
             if doi in seen_dois:
                 continue
             seen_dois.add(doi)
 
-        # Pass 2: Normalized title
+        # Pass 2: Normalized title similarity
         norm = _normalize_title(article.title)
         if not norm:
             unique.append(article)
             continue
 
         is_dup = False
-        for seen in seen_titles:
-            if _levenshtein(norm, seen) < 5:
+        for seen_norm, seen_article in seen_titles:
+            ratio = _similarity_ratio(norm, seen_norm)
+            if ratio > 0.85:
+                # Keep the article with the longer abstract
+                if len(article.abstract or "") > len(seen_article.abstract or ""):
+                    # Replace the existing one
+                    idx = next(i for i, a in enumerate(unique) if a is seen_article)
+                    unique[idx] = article
+                    seen_titles = [(n, a) if a is not seen_article else (norm, article)
+                                   for n, a in seen_titles]
                 is_dup = True
                 break
         if is_dup:
             continue
 
-        seen_titles.append(norm)
+        seen_titles.append((norm, article))
         unique.append(article)
 
     removed = len(articles) - len(unique)
     if removed:
-        logger.info("Dedup pass 1+2: removed %d duplicates (%d → %d)",
+        logger.info("Dedup pass 1+2 (DOI + title >85%%): removed %d duplicates (%d → %d)",
                      removed, len(articles), len(unique))
 
     # Pass 3: Sentence-Transformers (optional)

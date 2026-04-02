@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 _SPECIALTIES = list(SPECIALTY_MESH.keys()) + ["Sonstige"]
 
 # How many articles to send in one LLM call
-BATCH_SIZE = 5
+BATCH_SIZE = 10  # larger batches = fewer LLM calls (was 5)
 
 _PREFILTER_SYSTEM_PROMPT = f"""\
 Du bist ein medizinischer Relevanzfilter für ein Ärzte-Dashboard.
@@ -431,41 +431,80 @@ def prefilter_articles(articles: List[Article]) -> List[Article]:
     Also assigns ``article.specialty`` when the LLM provides one and the
     article doesn't have a specialty yet.
 
-    If no prefilter providers are configured (no API key), all articles
-    pass through unchanged.
+    **Robust fallback**: When the LLM is rate-limited (returns None for
+    both relevant and fachgebiet), a fast keyword-based medical-relevance
+    check is applied.  Articles that contain zero medical keywords are
+    dropped — this catches chemistry, materials science, agriculture, etc.
+
+    If no prefilter providers are configured (no API key), the keyword
+    fallback is used directly.
     """
+    from src.processing.classifier import is_medically_relevant, classify_specialty
+
     providers = get_provider_chain("prefilter")
-    if not providers:
-        logger.info("No prefilter providers configured — skipping pre-filter")
-        return articles
 
     kept: List[Article] = []
-    removed = 0
+    removed_llm = 0
+    removed_kw = 0
     batch_calls = 0
+    kw_fallback_count = 0
+
+    if not providers:
+        logger.info("No prefilter providers configured — using keyword fallback only")
 
     # Process in batches
     for start in range(0, len(articles), BATCH_SIZE):
         batch = articles[start : start + BATCH_SIZE]
 
-        if len(batch) >= 2:
-            # Batch mode (2+ articles)
-            results = _prefilter_batch(batch, providers)
-            batch_calls += 1
+        if providers:
+            if len(batch) >= 2:
+                results = _prefilter_batch(batch, providers)
+                batch_calls += 1
+            else:
+                results = [prefilter_article(batch[0])]
         else:
-            # Single article — use direct call
-            results = [prefilter_article(batch[0])]
+            # No providers → all get (True, None) to be handled by fallback
+            results = [(True, None)] * len(batch)
 
         for article, (relevant, fachgebiet) in zip(batch, results):
-            if relevant:
-                if fachgebiet and fachgebiet != "Sonstige" and not article.specialty:
-                    article.specialty = fachgebiet
-                kept.append(article)
-            else:
-                removed += 1
-                logger.debug("Prefilter removed: %s", (article.title or "")[:80])
+            if not relevant:
+                # LLM explicitly said not relevant
+                removed_llm += 1
+                logger.debug("Prefilter (LLM) removed: %s", (article.title or "")[:80])
+                continue
+
+            # Assign specialty from LLM if available
+            if fachgebiet and fachgebiet != "Sonstige" and not article.specialty:
+                article.specialty = fachgebiet
+
+            # --- Keyword fallback for articles without specialty ---
+            # If the LLM didn't assign a specialty (rate-limited or parse
+            # failure), apply the keyword-based medical-relevance check.
+            if not article.specialty:
+                # Try keyword-based specialty classification first
+                article.specialty = classify_specialty(article)
+
+            if not article.specialty:
+                # Still no specialty — check if it's medically relevant at all
+                if not is_medically_relevant(article):
+                    removed_kw += 1
+                    logger.debug(
+                        "Prefilter (keyword) removed: %s",
+                        (article.title or "")[:80],
+                    )
+                    continue
+                kw_fallback_count += 1
+                # Mark as "Allgemeinmedizin" rather than leaving NULL —
+                # articles with SOME medical signal but no clear specialty
+                # are generic/cross-cutting medical content.
+                article.specialty = "Allgemeinmedizin"
+
+            kept.append(article)
 
     logger.info(
-        "Prefilter: %d kept, %d removed (of %d total, %d batch calls)",
-        len(kept), removed, len(articles), batch_calls,
+        "Prefilter: %d kept, %d removed by LLM, %d removed by keyword check "
+        "(%d total, %d batch calls, %d assigned to Allgemeinmedizin via fallback)",
+        len(kept), removed_llm, removed_kw, len(articles),
+        batch_calls, kw_fallback_count,
     )
     return kept

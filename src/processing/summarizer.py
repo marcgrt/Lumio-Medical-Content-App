@@ -122,7 +122,7 @@ def generate_llm_summary(article: Article) -> Optional[str]:
         providers=providers,
         messages=[{"role": "user", "content": user_msg}],
         system=LLM_SUMMARY_SYSTEM_PROMPT,
-        max_tokens=300,
+        max_tokens=1024,
     )
     if raw:
         return _validate_summary(raw, title)
@@ -424,9 +424,15 @@ def summarize_articles(articles: list[Article]) -> list[Article]:
     # Split articles into those needing summaries
     needs_summary = [a for a in articles if not a.summary_de]
 
-    # LLM candidates = top N articles (already sorted by score)
-    llm_candidates = needs_summary[:LLM_MAX_ARTICLES_PER_RUN] if use_llm else []
-    template_candidates = needs_summary[len(llm_candidates):]
+    # LLM candidates = articles with score >= threshold (saves calls for low-score articles)
+    from src.config import SCORE_MIN_LLM_SUMMARY
+    if use_llm:
+        llm_candidates = [a for a in needs_summary
+                          if a.relevance_score >= SCORE_MIN_LLM_SUMMARY][:LLM_MAX_ARTICLES_PER_RUN]
+    else:
+        llm_candidates = []
+    _llm_ids = {a.id for a in llm_candidates}
+    template_candidates = [a for a in needs_summary if a.id not in _llm_ids]
 
     llm_count = 0
 

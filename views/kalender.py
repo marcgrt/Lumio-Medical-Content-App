@@ -1,6 +1,7 @@
 """Lumio — Redaktionskalender tab: Kongresse, saisonale Themen, redaktionelle Planung."""
 
 from datetime import date
+from html import escape as _esc
 
 import streamlit as st
 
@@ -121,12 +122,12 @@ def render_kalender():
                 f'padding:8px 12px;margin-bottom:8px;border-radius:0 6px 6px 0;'
                 f'background:rgba(255,255,255,0.03)">'
                 f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
-                f'<span style="font-size:0.75rem;color:#888">{date_str}</span>'
-                f'{icon} <strong>{ev["title"]}</strong> {spec_html}{article_badge}'
+                f'<span style="font-size:0.75rem;color:#888">{_esc(date_str)}</span>'
+                f'{icon} <strong>{_esc(ev["title"])}</strong> {spec_html}{article_badge}'
                 f'<span style="font-size:0.75rem;color:#d4a017">{stars}</span>'
                 f'</div>'
                 f'<div style="font-size:0.78rem;color:#999;margin-top:4px">'
-                f'{ev["prep_reminder_de"]}</div>'
+                f'{_esc(ev["prep_reminder_de"])}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -157,8 +158,8 @@ def render_kalender():
                         article_info = f" ({ev['related_article_count']} Artikel in DB)"
 
                     st.markdown(
-                        f'{icon} **{ev["title"]}** {spec_html}'
-                        f'<span style="font-size:0.78rem;color:#888">{article_info}</span>',
+                        f'{icon} **{_esc(ev["title"])}** {spec_html}'
+                        f'<span style="font-size:0.78rem;color:#888">{_esc(article_info)}</span>',
                         unsafe_allow_html=True,
                     )
             else:
@@ -171,7 +172,7 @@ def render_kalender():
                 tags_html = " ".join(
                     f'<span style="background:rgba(245,158,11,0.12);color:#f59e0b;'
                     f'padding:2px 10px;border-radius:12px;font-size:0.75rem;'
-                    f'display:inline-block;margin:2px 4px 2px 0">{t}</span>'
+                    f'display:inline-block;margin:2px 4px 2px 0">{_esc(t)}</span>'
                     for t in cm["seasonal_topics"]
                 )
                 st.markdown(
@@ -204,9 +205,9 @@ def render_kalender():
                 f'padding:12px 16px;margin-bottom:8px;background:var(--c-surface);'
                 f'display:flex;align-items:center;justify-content:space-between">'
                 f'<div>'
-                f'<div style="font-weight:600;font-size:0.85rem">{sug["topic"]}</div>'
+                f'<div style="font-weight:600;font-size:0.85rem">{_esc(sug["topic"])}</div>'
                 f'<div style="font-size:0.75rem;color:var(--c-text-muted);margin-top:2px">'
-                f'{sug["suggestion_de"]}</div>'
+                f'{_esc(sug["suggestion_de"])}</div>'
                 f'</div>'
                 f'<span style="font-size:1.2rem;font-weight:700;color:{color};min-width:50px;'
                 f'text-align:center">{count}</span>'

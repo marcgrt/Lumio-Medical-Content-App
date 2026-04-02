@@ -1,37 +1,40 @@
-"""Lumio — Sidebar with filters, KPIs, watchlists, and score info."""
+"""Lumio — Sidebar with filters, KPIs, watchlists, favorites, and score info."""
 
 from datetime import date, timedelta
 from pathlib import Path
 import base64
 
 import streamlit as st
-from sqlmodel import delete
+# sqlmodel.delete is only needed for watchlist deletion — import lazily
+# from sqlmodel import delete  # moved to lazy import inside function
 
 from src.models import Watchlist, WatchlistMatch, get_session
 from src.processing.watchlist import (
     get_active_watchlists, get_watchlist_counts,
+    run_watchlist_matching,
 )
 from components.helpers import (
-    _esc, get_stats, get_unique_values,
+    _esc, get_articles, get_stats, get_unique_values,
+    update_article_status, score_pill,
 )
 
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
 @st.cache_resource
-def _load_static_b64(_v=2) -> tuple:
-    """Load & base64-encode logo + audio ONCE (cached forever). Bump _v to bust cache."""
+def _load_static_b64(_v=3) -> tuple:
+    """Load & base64-encode logo ONCE (cached forever). Bump _v to bust cache.
+
+    Audio is loaded lazily via static file serving (app/static/news_flow.mp3)
+    to avoid embedding ~970KB base64 in every HTML payload.
+    """
     logo_b64 = ""
     logo_path = _STATIC_DIR / "logo.png"
     if logo_path.exists():
         logo_b64 = base64.b64encode(logo_path.read_bytes()).decode()
 
-    audio_b64 = ""
-    audio_path = _STATIC_DIR / "news_flow.mp3"
-    if audio_path.exists():
-        audio_b64 = base64.b64encode(audio_path.read_bytes()).decode()
-
-    return logo_b64, audio_b64
+    # audio_b64 no longer needed — served via Streamlit static files
+    return logo_b64, ""
 
 
 def render_sidebar() -> dict:
@@ -164,8 +167,7 @@ def render_sidebar() -> dict:
             }}
             setTimeout(function(){{ if(confetti) confetti.innerHTML=''; }}, 5000);
 
-            var audioUri = 'data:audio/mpeg;base64,{_audio_b64}';
-            pw.__ee_audio = new Audio(audioUri);
+            pw.__ee_audio = new Audio('app/static/onboarding_track.mp3');
             pw.__ee_audio.loop = true;
             pw.__ee_playing = false;
 
@@ -187,32 +189,30 @@ def render_sidebar() -> dict:
             }});
             pd.body.appendChild(banner);
           }}
-        }})();
-        </script>
-        """, height=0)
-
-        # --- Help button (injected via JS so onclick works) ---
-        st.components.v1.html("""
-        <script>
-        (function(){
-          var pd=window.parent.document;
+          // --- Help button (injected inline, same iframe) ---
           var sidebar=pd.querySelector('[data-testid="stSidebar"]');
-          if(!sidebar || pd.getElementById('lumio-help-btn')) return;
-          var btn=pd.createElement('div');
-          btn.id='lumio-help-btn';
-          btn.title='Tour starten';
-          btn.textContent='?';
-          btn.style.cssText='position:fixed;top:14px;right:14px;width:28px;height:28px;border-radius:50%;'+
-            'background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.07);'+
-            'color:#6b6b82;font-size:0.78rem;font-weight:700;display:flex;align-items:center;'+
-            'justify-content:center;cursor:pointer;z-index:10;transition:all 0.2s;';
-          btn.onmouseenter=function(){btn.style.background='rgba(163,230,53,0.12)';btn.style.borderColor='#a3e635';btn.style.color='#a3e635';};
-          btn.onmouseleave=function(){btn.style.background='rgba(255,255,255,0.06)';btn.style.borderColor='rgba(255,255,255,0.07)';btn.style.color='#6b6b82';};
-          btn.addEventListener('click',function(){
-            if(window.parent.__lumioRestartTour) window.parent.__lumioRestartTour();
-          });
-          sidebar.appendChild(btn);
-        })();
+          if(sidebar && !pd.getElementById('lumio-help-btn')) {{
+            var btn=pd.createElement('div');
+            btn.id='lumio-help-btn';
+            btn.title='Tour starten';
+            btn.textContent='?';
+            var cs=window.parent.getComputedStyle(pd.documentElement);
+            var cBorder=cs.getPropertyValue('--c-border').trim()||'rgba(255,255,255,0.07)';
+            var cMuted=cs.getPropertyValue('--c-text-muted').trim()||'#6b6b82';
+            var cAccent=cs.getPropertyValue('--c-accent').trim()||'#a3e635';
+            var cAccentLight=cs.getPropertyValue('--c-accent-light').trim()||'rgba(132,204,22,0.12)';
+            btn.style.cssText='position:fixed;top:14px;right:14px;width:28px;height:28px;border-radius:50%;'+
+              'background:var(--c-surface);border:1px solid '+cBorder+';'+
+              'color:'+cMuted+';font-size:0.78rem;font-weight:700;display:flex;align-items:center;'+
+              'justify-content:center;cursor:pointer;z-index:10;transition:background 0.2s,border-color 0.2s,color 0.2s;';
+            btn.onmouseenter=function(){{btn.style.background=cAccentLight;btn.style.borderColor=cAccent;btn.style.color=cAccent;}};
+            btn.onmouseleave=function(){{btn.style.background='var(--c-surface)';btn.style.borderColor=cBorder;btn.style.color=cMuted;}};
+            btn.addEventListener('click',function(){{
+              if(window.parent.__lumioRestartTour) window.parent.__lumioRestartTour();
+            }});
+            sidebar.appendChild(btn);
+          }}
+        }})();
         </script>
         """, height=0)
 
@@ -226,7 +226,7 @@ def render_sidebar() -> dict:
                 </div>
                 <div class="sidebar-kpi-item">
                     <div class="sidebar-kpi-num" style="color:var(--c-success)">{stats['hq']}</div>
-                    <div class="sidebar-kpi-lbl">Top-Evidenz</div>
+                    <div class="sidebar-kpi-lbl">Score \u226570</div>
                 </div>
                 <div class="sidebar-kpi-item">
                     <div class="sidebar-kpi-num" style="color:var(--c-danger)">{stats['alerts']}</div>
@@ -237,23 +237,68 @@ def render_sidebar() -> dict:
 
         st.divider()
 
-        # --- Zeitraum (radio pills) ---
+        # --- Zeitraum: Schnellauswahl + Fein-Regler ---
         st.markdown('<div class="filter-label">Zeitraum</div>', unsafe_allow_html=True)
-        time_range = st.radio(
+
+        # --- Zeitraum: Radio pills + fine slider, synced via session_state ---
+        _QUICK_OPTIONS = ["1T", "7T", "14T", "30T", "3M", "\u221e"]
+        _QUICK_TO_DAYS = {"1T": 1, "7T": 7, "14T": 14, "30T": 30, "3M": 90, "\u221e": 0}
+        _TIME_STOPS = [
+            (1, "1 Tag"), (2, "2 Tage"), (3, "3 Tage"), (5, "5 Tage"),
+            (7, "1 Woche"), (10, "10 Tage"), (14, "2 Wochen"),
+            (21, "3 Wochen"), (30, "30 Tage"),
+            (60, "2 Monate"), (90, "3 Monate"), (120, "4 Monate"),
+            (180, "6 Monate"), (270, "9 Monate"), (365, "12 Monate"),
+            (0, "Gesamt"),
+        ]
+        _stop_values = [s[0] for s in _TIME_STOPS]
+        _stop_labels = {s[0]: s[1] for s in _TIME_STOPS}
+
+        # Initialise single source of truth
+        if "_time_days" not in st.session_state:
+            st.session_state["_time_days"] = 7
+
+        # Use on_change callbacks to avoid double-rerun issues
+        def _on_radio_change():
+            val = st.session_state.get("_time_radio_widget", "7T")
+            st.session_state["_time_days"] = _QUICK_TO_DAYS.get(val, 7)
+
+        def _on_slider_change():
+            st.session_state["_time_days"] = st.session_state.get("_time_slider_widget", 7)
+
+        # Compute current radio index from _time_days
+        _current_days = st.session_state["_time_days"]
+        _radio_match = next((k for k, v in _QUICK_TO_DAYS.items() if v == _current_days), None)
+        _radio_idx = _QUICK_OPTIONS.index(_radio_match) if _radio_match in _QUICK_OPTIONS else 1
+
+        st.radio(
             "Zeitraum",
-            ["Heute", "7 Tage", "30 Tage", "Alle"],
-            index=1,
+            _QUICK_OPTIONS,
+            index=_radio_idx,
             horizontal=True,
             label_visibility="collapsed",
+            key="_time_radio_widget",
+            on_change=_on_radio_change,
         )
+
+        st.select_slider(
+            "Zeitraum fein",
+            options=_stop_values,
+            value=_current_days if _current_days in _stop_values else 7,
+            format_func=lambda v: _stop_labels.get(v, str(v)),
+            key="_time_slider_widget",
+            label_visibility="collapsed",
+            on_change=_on_slider_change,
+        )
+
+        # Convert to date_from
+        _days_val = st.session_state.get("_time_days", 7)
         date_from = None
         date_to = date.today()
-        if time_range == "Heute":
-            date_from = date.today()
-        elif time_range == "7 Tage":
-            date_from = date.today() - timedelta(days=7)
-        elif time_range == "30 Tage":
-            date_from = date.today() - timedelta(days=30)
+        if _days_val == 0:
+            date_from = None  # Gesamt = kein Limit
+        else:
+            date_from = date.today() - timedelta(days=_days_val)
 
         # --- Fachgebiet ---
         st.markdown('<div class="filter-label">Fachgebiet</div>', unsafe_allow_html=True)
@@ -263,65 +308,178 @@ def render_sidebar() -> dict:
             placeholder="Alle Fachgebiete", label_visibility="collapsed",
         )
 
-        # --- Score ---
-        st.markdown('<div class="filter-label">Mindest-Score</div>', unsafe_allow_html=True)
-        min_score = st.slider("Mindest-Score", 0, 100, 0, 5, label_visibility="collapsed")
+        # --- Quellen (hochgezogen) ---
+        st.markdown('<div class="filter-label">Quellen</div>', unsafe_allow_html=True)
+        all_sources = get_unique_values("source")
+        selected_sources = st.multiselect(
+            "Quellen", options=all_sources, default=[],
+            placeholder="Alle Quellen", label_visibility="collapsed",
+        )
 
-        # --- Sprache ---
+        # --- Sprache (einzeilig) ---
         st.markdown('<div class="filter-label">Sprache</div>', unsafe_allow_html=True)
         language_filter = st.radio(
             "Sprache",
-            ["Alle", "Deutsch", "English"],
+            ["Alle", "DE", "EN"],
+            index=0,
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+
+        # --- Sortierung ---
+        _SORT_OPTIONS = [
+            "\U0001f525 Trending",
+            "\U0001f3af High Score",
+            "\U0001f552 Neueste zuerst",
+            "\U0001f4d1 Quelle A\u2013Z",
+            "\u2728 Redaktions-Tipp",
+            "\U0001f48e Unentdeckte Perlen",
+            "\U0001fa7a Klinische Dringlichkeit",
+        ]
+        _SORT_KEY_MAP = {
+            "\U0001f525 Trending": "score",
+            "\U0001f3af High Score": "high_score",
+            "\U0001f552 Neueste zuerst": "date",
+            "\U0001f4d1 Quelle A\u2013Z": "source",
+            "\u2728 Redaktions-Tipp": "editorial",
+            "\U0001f48e Unentdeckte Perlen": "hidden_gems",
+            "\U0001fa7a Klinische Dringlichkeit": "clinical",
+        }
+        _sort_label = st.selectbox(
+            "Sortierung",
+            _SORT_OPTIONS,
+            index=0,
+            help="🔥 Trending = Score × Aktualität  \n🎯 High Score = Reiner Score  \n✨ Redaktions-Tipp = Score × Frische  \n💎 Perlen = Seltene Quellen  \n🩺 Klinisch = Handlungsrelevanz",
+        )
+        sort_by_value = _SORT_KEY_MAP.get(_sort_label, "score")
+
+        # Track sort change
+        if st.session_state.get("_last_sort") != sort_by_value:
+            from components.auth import track_activity
+            track_activity("sort_change", f"sort:{sort_by_value}")
+            st.session_state["_last_sort"] = sort_by_value
+
+        # --- Quellenkategorie (prominent) ---
+        st.markdown('<div class="filter-label">Quellenkategorie</div>', unsafe_allow_html=True)
+        _SOURCE_CATEGORY_LABELS = {
+            "top_journal": "Top-Journals",
+            "specialty_journal": "Specialty-Journals",
+            "fachpresse_de": "Deutsche Fachpresse",
+            "fachpresse_aufbereitet": "Aufbereitete Quellen",
+            "berufspolitik": "Berufspolitik",
+            "behoerde": "Beh\u00f6rden",
+            "leitlinie": "Leitlinien",
+            "fachgesellschaft": "Fachgesellschaften",
+            "literaturdatenbank": "Literaturdatenbanken",
+            "preprint": "Preprints",
+            "news_aggregation": "News",
+        }
+        all_categories = get_unique_values("source_category")
+        selected_categories = st.multiselect(
+            "Quellenkategorie",
+            options=all_categories,
+            default=[],
+            format_func=lambda x: _SOURCE_CATEGORY_LABELS.get(x, x),
+            placeholder="Alle Kategorien",
+            label_visibility="collapsed",
+        )
+
+        # --- Status (prominent) ---
+        st.markdown('<div class="filter-label">Status</div>', unsafe_allow_html=True)
+        status_filter = st.radio(
+            "Status",
+            ["ALL", "NEW", "SAVED", "ALERT", "ARCHIVED"],
+            format_func=lambda x: {
+                "ALL": "Alle", "NEW": "Neu",
+                "SAVED": "Gemerkt", "ALERT": "Warnungen",
+                "ARCHIVED": "Archiv",
+            }.get(x, x),
             index=0,
             horizontal=True,
             label_visibility="collapsed",
         )
 
         # --- Weitere Filter (collapsed) ---
+        # Default values for widgets inside expander (needed when collapsed)
+        min_score = 0
         with st.expander("Weitere Filter", expanded=False):
-            all_sources = get_unique_values("source")
-            selected_sources = st.multiselect(
-                "Quellen", options=all_sources, default=[],
-                placeholder="Alle Quellen", label_visibility="collapsed",
-            )
+            # --- Mindest-Score ---
+            min_score = st.slider("Mindest-Score", 0, 100, 0, 5)
 
-            # --- Studientyp ---
+            # --- Artikeltyp ---
             _study_type_options = get_unique_values("study_type")
             selected_study_types = st.multiselect(
-                "Studientyp", options=_study_type_options, default=[],
-                placeholder="Alle Studientypen", label_visibility="collapsed",
+                "Artikeltyp", options=_study_type_options, default=[],
+                placeholder="Alle Artikeltypen", label_visibility="collapsed",
             )
+
+            # --- Hat Zusammenfassung ---
+            has_summary_only = st.checkbox("Nur mit Zusammenfassung", value=False)
 
             # --- Open Access ---
             open_access_only = st.checkbox("Nur Open Access", value=False)
 
-            status_filter = st.selectbox(
-                "Status",
-                ["ALL", "NEW", "SAVED", "REJECTED", "ALERT"],
-                format_func=lambda x: {
-                    "ALL": "Alle Status", "NEW": "Neu",
-                    "SAVED": "Gemerkt", "REJECTED": "Ausgeblendet",
-                    "ALERT": "Alerts",
-                }.get(x, x),
-            )
-            search_query = st.text_input(
-                "Suche", placeholder="Stichwort eingeben...",
-                label_visibility="collapsed",
-            )
+        # Search removed from sidebar — use "Suche & Insights" tab
+        search_query = ""
 
         st.divider()
 
-        # --- Gemerkt shortcut (immer sichtbar) ---
+        # --- Gemerkt (grouped by specialty, most-recently-saved first) ---
         _fav_n = stats['saved'] + stats['approved']
-        _fav_count_html = f'{_fav_n}' if _fav_n > 0 else '\u2014'
-        st.markdown(f"""
-            <div class="fav-link">
-                <span style="font-size:0.85rem">\u2606</span>
-                <span style="font-size:0.78rem;font-weight:500;color:var(--c-text);flex:1">
-                    Gemerkt</span>
-                <span class="fav-count">{_fav_count_html}</span>
-            </div>
-        """, unsafe_allow_html=True)
+        _fav_label = f"\u2b50 Gemerkt ({_fav_n})" if _fav_n > 0 else "\u2b50 Gemerkt"
+        with st.expander(_fav_label, expanded=False):
+            _fav_saved = get_articles(status_filter="SAVED", min_score=0)
+            _fav_approved = get_articles(status_filter="APPROVED", min_score=0)
+            _fav_all = _fav_saved + _fav_approved
+            if not _fav_all:
+                st.markdown(
+                    '<div style="text-align:center;padding:12px 8px;color:var(--c-text-muted);'
+                    'font-size:0.8rem">'
+                    'Noch keine gemerkten Artikel.<br>'
+                    'Nutze <b>\u2606</b> (Merken) bei Artikeln, '
+                    'um sie hier zu sammeln.'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                # Sort: most recently saved first (created_at descending)
+                _fav_all.sort(key=lambda a: a.created_at, reverse=True)
+
+                # Group by specialty (OrderedDict preserves insertion = recency order)
+                from collections import OrderedDict
+                _spec_groups: OrderedDict[str, list] = OrderedDict()
+                for a in _fav_all:
+                    spec = a.specialty or "Sonstige"
+                    _spec_groups.setdefault(spec, []).append(a)
+
+                # Render each specialty as a nested st.expander
+                _ri = 0
+                for spec, articles in _spec_groups.items():
+                    with st.expander(f"{spec} ({len(articles)})", expanded=False):
+                        for a in articles:
+                            safe_t = _esc(a.title[:80])
+                            safe_u = _esc(a.url) if a.url else ""
+                            title_el = (
+                                f'<a href="{safe_u}" target="_blank" '
+                                f'style="font-size:0.72rem;color:var(--c-text);'
+                                f'text-decoration:none;line-height:1.3">{safe_t}</a>'
+                                if safe_u
+                                else f'<span style="font-size:0.72rem;line-height:1.3">{safe_t}</span>'
+                            )
+                            st.markdown(
+                                f'<div style="display:flex;align-items:start;gap:5px;'
+                                f'padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.04)">'
+                                f'{score_pill(a.relevance_score)}'
+                                f'<span style="flex:1;min-width:0">{title_el}</span>'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
+                            if st.button("\u21a9", key=f"sb_fav_un_{a.id}_{_ri}",
+                                          help="Zurücksetzen auf Neu"):
+                                update_article_status(a.id, "NEW")
+                                st.toast("Zurückgesetzt")
+                                st.rerun()
+                            _ri += 1
 
         # --- Watchlists (cached) ---
         @st.cache_data(ttl=300, show_spinner=False)
@@ -346,118 +504,176 @@ def render_sidebar() -> dict:
                     '<div style="text-align:center;padding:12px 8px;color:var(--c-text-muted);'
                     'font-size:0.8rem">'
                     'Keine Watchlists.<br>'
-                    'Erstelle eine im <b>Feed</b>-Tab, um Themen gezielt zu verfolgen.'
+                    'Erstelle unten eine neue Watchlist, um Themen gezielt zu verfolgen.'
                     '</div>',
                     unsafe_allow_html=True,
                 )
             else:
                 _active_wl = st.session_state.get("active_watchlist_id")
 
-                # "All articles" reset button when a watchlist filter is active
+                # Info banner when a watchlist filter is active
                 if _active_wl:
-                    if st.button("\u2190 Alle Artikel", key="wl_reset",
-                                 use_container_width=True):
-                        st.session_state.pop("active_watchlist_id", None)
-                        st.session_state["_wl_expanded"] = True
-                        st.rerun()
+                    _active_wl_name = next(
+                        (w.name for w in _wl_all if w.id == _active_wl), ""
+                    )
+                    st.markdown(
+                        f'<div style="background:var(--c-accent);color:#fff;'
+                        f'border-radius:8px;padding:10px 12px;margin-bottom:8px;'
+                        f'font-size:0.82rem;line-height:1.4">'
+                        f'<div style="font-weight:600">🎯 {_esc(_active_wl_name)}</div>'
+                        f'<div style="font-size:0.72rem;opacity:0.85;margin-top:2px">'
+                        f'Watchlist-Filter aktiv · ✅ erneut klicken zum Aufheben</div></div>',
+                        unsafe_allow_html=True,
+                    )
 
                 for wl in _wl_all:
                     cnt = _wl_counts.get(wl.id, 0)
-                    kw_short = wl.keywords[:30] + ("..." if len(wl.keywords) > 30 else "")
+                    kw_short = wl.keywords[:40] + ("..." if len(wl.keywords) > 40 else "")
                     _is_active = (_active_wl == wl.id)
 
-                    # Watchlist name button + count badge + delete button
-                    _wl_cols = st.columns([5, 1])
-                    with _wl_cols[0]:
-                        # Highlight active watchlist
-                        _border = "var(--c-accent)" if _is_active else "var(--c-border)"
-                        _bg = "rgba(163,230,53,0.06)" if _is_active else "transparent"
-                        st.markdown(
-                            f'<div style="display:flex;justify-content:space-between;align-items:center;'
-                            f'padding:4px 0;font-size:0.78rem">'
-                            f'<span style="font-weight:600">{_esc(wl.name)}</span>'
-                            f'<span style="background:var(--c-accent);color:var(--c-bg);font-size:0.6rem;'
-                            f'font-weight:700;padding:2px 8px;border-radius:10px">{cnt}</span>'
-                            f'</div>'
-                            f'<div style="font-size:0.62rem;color:var(--c-text-muted);margin-bottom:2px">'
-                            f'{_esc(kw_short)}</div>',
-                            unsafe_allow_html=True,
-                        )
-                        # Clickable "Filter" / "Aktiv" button
-                        _btn_label = "\u2714 Aktiv" if _is_active else "Filtern"
-                        if st.button(_btn_label, key=f"wl_filter_{wl.id}",
-                                     use_container_width=True):
+                    # Watchlist name + count — use native Streamlit for reliability
+                    _wl_label = f"**{wl.name}**  {cnt} Treffer"
+                    if _is_active:
+                        _wl_label = f"**🎯 {wl.name}**  {cnt} Treffer"
+                    st.markdown(_wl_label)
+                    st.caption(kw_short)
+
+                    # Action icons — side by side
+                    _ic1, _ic2 = st.columns(2)
+                    with _ic1:
+                        _f_icon = "✅" if _is_active else "🔍"
+                        _f_help = "Filter deaktivieren" if _is_active else "Im Feed filtern"
+                        if st.button(_f_icon, key=f"wl_filter_{wl.id}",
+                                     help=_f_help, use_container_width=True):
                             if _is_active:
-                                # Deactivate
                                 st.session_state.pop("active_watchlist_id", None)
                             else:
                                 st.session_state["active_watchlist_id"] = wl.id
                             st.session_state["_wl_expanded"] = True
                             st.rerun()
-
-                    with _wl_cols[1]:
-                        if st.button("\u2715", key=f"del_wl_{wl.id}",
-                                     help="Watchlist l\u00f6schen"):
+                    with _ic2:
+                        if st.button("🗑️", key=f"del_wl_{wl.id}",
+                                     help="Watchlist löschen", use_container_width=True):
                             with get_session() as session:
-                                session.exec(delete(WatchlistMatch).where(WatchlistMatch.watchlist_id == wl.id))
+                                from sqlmodel import delete as _sqlmodel_delete
+                                session.exec(_sqlmodel_delete(WatchlistMatch).where(WatchlistMatch.watchlist_id == wl.id))
                                 _wl_obj = session.get(Watchlist, wl.id)
                                 if _wl_obj:
                                     session.delete(_wl_obj)
                                 session.commit()
                             _cached_watchlists.clear()
                             _cached_wl_counts.clear()
-                            # Clear active filter if deleted watchlist was active
                             if _active_wl == wl.id:
                                 st.session_state.pop("active_watchlist_id", None)
                             st.session_state["_wl_expanded"] = True
-                            st.toast(f"Watchlist '{wl.name}' gel\u00f6scht")
+                            st.toast(f"Watchlist '{wl.name}' gelöscht")
                             st.rerun()
+
+        # --- Neue Watchlist erstellen ---
+        with st.expander("\u2795 Neue Watchlist erstellen", expanded=False):
+            with st.form("watchlist_form", clear_on_submit=True):
+                wl_name = st.text_input("Name", placeholder="z.B. GLP-1 Agonisten")
+                wl_keywords = st.text_input(
+                    "Stichwörter (kommagetrennt)",
+                    placeholder="glp-1, semaglutide, tirzepatide",
+                )
+                all_specs = get_unique_values("specialty")
+                wl_spec = st.selectbox(
+                    "Fachgebiet (optional)", ["Alle"] + all_specs
+                )
+                wl_min_score = st.number_input(
+                    "Mindest-Score", min_value=0, max_value=100, value=0, step=5
+                )
+                wl_submitted = st.form_submit_button("Watchlist anlegen")
+
+                if wl_submitted and wl_name and wl_keywords:
+                    with get_session() as session:
+                        session.add(Watchlist(
+                            name=wl_name.strip(),
+                            keywords=wl_keywords.strip(),
+                            specialty_filter=wl_spec if wl_spec != "Alle" else None,
+                            min_score=float(wl_min_score),
+                        ))
+                        session.commit()
+                    _existing_articles = get_articles(min_score=0)
+                    run_watchlist_matching(article_count=len(_existing_articles))
+                    _cached_watchlists.clear()
+                    _cached_wl_counts.clear()
+                    st.toast(f"Watchlist '{wl_name}' erstellt!")
+                    st.rerun()
 
         # --- Score Info ---
         from src.config import SCORE_THRESHOLD_HIGH as _STH
         with st.expander("\u2139\ufe0f Score-Info"):
             st.markdown("""
-<div style="font-size:0.78rem;line-height:1.6;color:var(--c-text)">
-<div style="font-weight:700;margin-bottom:6px">Relevanz-Score (0\u2013100)</div>
-<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--c-border-subtle)">
-    <span style="font-weight:600">Journal</span><span style="color:var(--c-text-muted)">30 %</span>
+<div style="font-size:0.75rem;line-height:1.5;color:var(--c-text)">
+<div style="font-weight:700;margin-bottom:6px">Relevanz-Score v2 (0\u2013100)</div>
+
+<div style="font-size:0.68rem;font-weight:600;color:var(--c-accent);margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.5px">\U0001f916 KI-Scoring (prim\u00e4r)</div>
+<div style="font-size:0.68rem;color:var(--c-text-muted);margin-bottom:6px">6 Dimensionen mit variablen Maxima via LLM (Summe = 100)</div>
+
+<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--c-border-subtle)">
+    <span style="font-weight:600">Klinische Handlungsrelevanz</span><span style="color:var(--c-text-muted)">0\u201320</span>
 </div>
-<div style="font-size:0.7rem;color:var(--c-text-muted);margin-bottom:4px">NEJM, Lancet, \u00c4rzteblatt \u2026</div>
-<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--c-border-subtle)">
-    <span style="font-weight:600">Studiendesign</span><span style="color:var(--c-text-muted)">25 %</span>
+<div style="font-size:0.65rem;color:var(--c-text-muted);margin-bottom:3px">Sofortige Handlung 20 \u203a Wahrscheinlich 15 \u203a Indirekt 11 \u203a Hintergrund 6</div>
+
+<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--c-border-subtle)">
+    <span style="font-weight:600">Evidenz- &amp; Recherchetiefe</span><span style="color:var(--c-text-muted)">0\u201320</span>
 </div>
-<div style="font-size:0.7rem;color:var(--c-text-muted);margin-bottom:4px">Meta-Analyse \u203a RCT \u203a Leitlinie \u203a Review \u203a News</div>
-<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--c-border-subtle)">
-    <span style="font-weight:600">Aktualit\u00e4t</span><span style="color:var(--c-text-muted)">20 %</span>
+<div style="font-size:0.65rem;color:var(--c-text-muted);margin-bottom:3px">Meta-Analyse/Investigativ 19 \u203a RCT/Solide 15 \u203a Moderat 11 \u203a Schwach 6</div>
+
+<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--c-border-subtle)">
+    <span style="font-weight:600">Thematische Zugkraft</span><span style="color:var(--c-text-muted)">0\u201320</span>
 </div>
-<div style="font-size:0.7rem;color:var(--c-text-muted);margin-bottom:4px">Neuere Artikel scoren h\u00f6her</div>
-<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--c-border-subtle)">
-    <span style="font-weight:600">Keywords</span><span style="color:var(--c-text-muted)">15 %</span>
+<div style="font-size:0.65rem;color:var(--c-text-muted);margin-bottom:3px">Maximal 19 \u203a Stark 15 \u203a Moderat 11 \u203a Gering 6</div>
+
+<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--c-border-subtle)">
+    <span style="font-weight:600">Neuigkeitswert</span><span style="color:var(--c-text-muted)">0\u201316</span>
 </div>
-<div style="font-size:0.7rem;color:var(--c-text-muted);margin-bottom:4px">Sicherheit, Leitlinien, Landmark</div>
-<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--c-border-subtle)">
-    <span style="font-weight:600">Arztrelevanz</span><span style="color:var(--c-text-muted)">10 %</span>
+<div style="font-size:0.65rem;color:var(--c-text-muted);margin-bottom:3px">Erstmalig 15 \u203a Update 11 \u203a Best\u00e4tigung 7 \u203a Nichts Neues 2</div>
+
+<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--c-border-subtle)">
+    <span style="font-weight:600">Quellenautori\u00e4t</span><span style="color:var(--c-text-muted)">0\u201312</span>
 </div>
-<div style="font-size:0.7rem;color:var(--c-text-muted);margin-bottom:8px">Therapie, Diagnostik, Gesundheitspolitik</div>
-<div style="display:flex;gap:12px;font-size:0.75rem;font-weight:600">
-    <span>\U0001f7e2 \u226565 Top</span>
-    <span>\U0001f7e1 40\u201364 Solide</span>
-    <span>\u26aa &lt;40 News</span>
+<div style="font-size:0.65rem;color:var(--c-text-muted);margin-bottom:3px">NEJM/Lancet 12 \u203a Fachjournal 10 \u203a \u00c4rzteblatt 9 \u203a Preprint 3</div>
+
+<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--c-border-subtle)">
+    <span style="font-weight:600">Aufbereitungsqualit\u00e4t</span><span style="color:var(--c-text-muted)">0\u201312</span>
+</div>
+<div style="font-size:0.65rem;color:var(--c-text-muted);margin-bottom:6px">Exzellent 12 \u203a Gut 9 \u203a Akzeptabel 6 \u203a Mangelhaft 3</div>
+
+<div style="font-size:0.68rem;font-weight:600;color:var(--c-text-muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.5px">\U0001f4cf Regelbasiert (Fallback)</div>
+<div style="font-size:0.68rem;color:var(--c-text-muted);margin-bottom:6px">Keyword-basierte Sch\u00e4tzung der 6 Dimensionen</div>
+
+<div style="display:flex;gap:10px;font-size:0.72rem;font-weight:600;margin-top:8px;padding-top:6px;border-top:1px solid var(--c-border-subtle)">
+    <span>\U0001f7e2 \u226570 TOP</span>
+    <span>\U0001f7e1 45\u201369 RELEVANT</span>
+    <span>\u26aa &lt;45 MONITOR</span>
 </div>
 </div>
             """, unsafe_allow_html=True)
+
+    # Human-readable period label for feed subtitle
+    _days = st.session_state.get("_time_days", 7)
+    _period_labels = {0: "Alle Artikel", 1: "Heute", 7: "Letzte 7 Tage",
+                      14: "Letzte 14 Tage", 30: "Letzte 30 Tage", 90: "Letzte 3 Monate"}
+    _period_label = _period_labels.get(_days, f"Letzte {_days} Tage")
 
     return {
         "date_from": date_from,
         "date_to": date_to,
         "selected_specialties": selected_specialties,
         "selected_sources": selected_sources,
+        "selected_categories": selected_categories,
         "min_score": min_score,
         "language_filter": language_filter,
+        "sort_by": sort_by_value,
         "selected_study_types": selected_study_types,
+        "has_summary_only": has_summary_only,
         "open_access_only": open_access_only,
         "status_filter": status_filter,
         "search_query": search_query,
         "wl_all": _wl_all,
         "wl_counts": _wl_counts,
+        "period_label": _period_label,
     }

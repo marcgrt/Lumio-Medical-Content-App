@@ -9,6 +9,7 @@ db/lumio.db-shm
 lumio.db
 .streamlit/secrets.toml
 nginx/.htpasswd
+credentials/
 db/llm_cache/
 db/backups/
 db/logs/
@@ -17,3 +18,8 @@ db/pakete/
 dist/
 build/
 .DS_Store
+.claude/
+*.mp4
+*.mp3
+digest.html
+lumio-web/

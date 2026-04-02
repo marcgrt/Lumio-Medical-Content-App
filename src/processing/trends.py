@@ -14,7 +14,7 @@ import logging
 import os
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 import numpy as np
@@ -96,6 +96,27 @@ class TrendCluster:
 
     # Rang
     rank: int = 0                     # 1 = Hero
+
+    # --- v2 Enrichments ---
+
+    # 1. Redaktionelle Handlungsempfehlung
+    editorial_urgency: str = "beobachten"    # "sofort" | "diese_woche" | "beobachten"
+    editorial_action_de: str = ""             # "Übersichtsartikel empfohlen — 3 neue RCTs"
+    editorial_color: str = "#a0a0b8"          # urgency color for UI
+
+    # 2. Storyline-Pitches (LLM-generiert)
+    storyline_pitches: list = field(default_factory=list)  # [{"angle_de": "...", "format": "Übersicht"}]
+
+    # 3. Quellen-Diversität
+    source_diversity_count: int = 0          # Anzahl unabhängiger Quellen
+    source_diversity_names: list = field(default_factory=list)  # ["NEJM", "Lancet", ...]
+    source_diversity_rating: str = "niedrig"  # "hoch" | "mittel" | "niedrig"
+    has_german_coverage: bool = False         # Ärzteblatt/ÄZ hat schon berichtet?
+    first_mover_chance: bool = False          # Deutsche Fachpresse hat NICHT berichtet
+
+    # 7. Sparkline (4-Wochen-Verlauf)
+    sparkline_data: list = field(default_factory=list)  # [count_w4, count_w3, count_w2, count_w1]
+    trend_phase: str = ""                     # "neu" | "wachsend" | "peak" | "abflachend"
 
 
 # ---------------------------------------------------------------------------
@@ -448,11 +469,20 @@ def _cluster_by_embeddings(
 # ---------------------------------------------------------------------------
 
 def _compute_signal_scores(cluster: TrendCluster, articles: list[Article]):
-    """Parse score_breakdown JSON and compute avg journal/design/arztrelevanz scores."""
+    """Parse score_breakdown JSON and compute signal scores.
+
+    Supports both v1 (flat keys: journal, design, arztrelevanz) and
+    v2 (nested: scores.clinical_action_relevance.score, etc.) formats.
+    """
     journal_scores = []
     design_scores = []
     arztrelevanz_scores = []
     high_tier = 0
+
+    # v2 dimension accumulators
+    v2_clinical = []
+    v2_evidence = []
+    v2_source_auth = []
 
     for a in articles:
         if not a.score_breakdown:
@@ -462,22 +492,42 @@ def _compute_signal_scores(cluster: TrendCluster, articles: list[Article]):
         except (json.JSONDecodeError, TypeError):
             continue
 
-        j = bd.get("journal", 0.0)
-        d = bd.get("design", 0.0)
-        ar = bd.get("arztrelevanz", 0.0)
-
-        journal_scores.append(j)
-        design_scores.append(d)
-        arztrelevanz_scores.append(ar)
-
-        # High-tier: journal weighted score >= 23 (top journals with WEIGHT_JOURNAL=0.30)
-        if j >= 23:
-            high_tier += 1
+        # v2 format: nested under "scores" key
+        if "scores" in bd and isinstance(bd["scores"], dict):
+            scores = bd["scores"]
+            clin = scores.get("clinical_action_relevance", {})
+            evid = scores.get("evidence_depth", {})
+            src = scores.get("source_authority", {})
+            v2_clinical.append(clin.get("score", 0) if isinstance(clin, dict) else 0)
+            v2_evidence.append(evid.get("score", 0) if isinstance(evid, dict) else 0)
+            v2_source_auth.append(src.get("score", 0) if isinstance(src, dict) else 0)
+            # High-tier: source_authority >= 9 (top journals)
+            sa = src.get("score", 0) if isinstance(src, dict) else 0
+            if sa >= 9:
+                high_tier += 1
+        else:
+            # v1 format: flat keys
+            j = bd.get("journal", 0.0)
+            d = bd.get("design", 0.0)
+            ar = bd.get("arztrelevanz", 0.0)
+            journal_scores.append(j)
+            design_scores.append(d)
+            arztrelevanz_scores.append(ar)
+            if j >= 23:
+                high_tier += 1
 
     n = len(articles) or 1
-    cluster.avg_journal_score = round(sum(journal_scores) / max(len(journal_scores), 1), 1)
-    cluster.avg_design_score = round(sum(design_scores) / max(len(design_scores), 1), 1)
-    cluster.avg_arztrelevanz = round(sum(arztrelevanz_scores) / max(len(arztrelevanz_scores), 1), 1)
+
+    # Prefer v2 if we have v2 data
+    if v2_clinical:
+        cluster.avg_journal_score = round(sum(v2_source_auth) / len(v2_source_auth), 1)
+        cluster.avg_design_score = round(sum(v2_evidence) / len(v2_evidence), 1)
+        cluster.avg_arztrelevanz = round(sum(v2_clinical) / len(v2_clinical), 1)
+    else:
+        cluster.avg_journal_score = round(sum(journal_scores) / max(len(journal_scores), 1), 1)
+        cluster.avg_design_score = round(sum(design_scores) / max(len(design_scores), 1), 1)
+        cluster.avg_arztrelevanz = round(sum(arztrelevanz_scores) / max(len(arztrelevanz_scores), 1), 1)
+
     cluster.high_tier_count = high_tier
     cluster.high_tier_ratio = round(high_tier / n, 2)
 
@@ -640,13 +690,18 @@ def _compute_cross_specialty(
     new_specs = set(curr_specs.keys()) - set(prev_specs.keys())
     old_specs = set(prev_specs.keys())
 
-    if new_specs and old_specs:
+    all_specs = list(curr_specs.keys())
+    if len(all_specs) == 2:
+        # Exactly 2 specialties → "A + B"
+        cluster.specialty_spread = f"{all_specs[0]} + {all_specs[1]}"
+    elif len(all_specs) > 2:
+        # 3+ specialties → "A bis C" (sorted alphabetically, first and last)
+        sorted_specs = sorted(all_specs)
+        cluster.specialty_spread = f"{sorted_specs[0]} bis {sorted_specs[-1]}"
+    elif new_specs and old_specs:
         old_main = max(old_specs, key=lambda s: prev_specs.get(s, 0))
         new_main = max(new_specs, key=lambda s: curr_specs.get(s, 0))
-        cluster.specialty_spread = f"Von {old_main} nach {new_main}"
-    elif len(curr_specs) >= 2:
-        top2 = curr_specs.most_common(2)
-        cluster.specialty_spread = f"{top2[0][0]} + {top2[1][0]}"
+        cluster.specialty_spread = f"{old_main} + {new_main}"
 
 
 # ---------------------------------------------------------------------------
@@ -668,10 +723,10 @@ def _compute_clinical_impact(cluster: TrendCluster, articles: list[Article]):
 def _generate_trend_summary_v2(cluster: TrendCluster, articles: list[Article]):
     """Generate smart_label + warum_wichtig + trend_summary via single LLM call."""
 
-    # Build article context
+    # Build article context (limit to 5 to keep prompt short → more output tokens)
     article_list = "\n".join(
-        f"- {a.title} ({a.journal or 'Unbekannt'}, Score {a.relevance_score:.0f})"
-        for a in articles[:8]
+        f"- {a.title[:80]} ({a.journal or '?'}, {a.relevance_score:.0f})"
+        for a in articles[:5]
     )
 
     # Momentum context
@@ -697,7 +752,7 @@ def _generate_trend_summary_v2(cluster: TrendCluster, articles: list[Article]):
     if cluster.is_cross_specialty and cluster.specialty_spread:
         cross_text = f"Cross-Specialty: {cluster.specialty_spread}"
 
-    prompt = f"""Du bist ein medizinischer Trendanalyst. Analysiere den folgenden Thementrend.
+    prompt = f"""Du bist ein medizinischer Trendanalyst für das esanum-Redaktionsteam. Analysiere den folgenden Thementrend.
 
 Thema: {cluster.topic_label}
 Fachgebiete: {', '.join(cluster.specialties) or 'Diverse'}
@@ -710,8 +765,13 @@ Top-Quellen: {', '.join(cluster.top_journals[:3]) or 'Diverse'}
 Artikel:
 {article_list}
 
-Antworte EXAKT in diesem Format (3 Teile getrennt durch ;;;):
-LABEL: [Catchy 3-6 Wort Trendname auf Deutsch, z.B. "GLP-1 erobert die Nephrologie"];;;WICHTIG: [1 Satz: Warum sollte ein praktizierender Arzt das wissen?];;;ZUSAMMENFASSUNG: [2 Sätze: Was ist der Trend + Was bedeutet das klinisch?]"""
+Antworte EXAKT in diesem Format — JEDEN Satz VOLLSTÄNDIG beenden, nichts abschneiden:
+
+LABEL: [Catchy 3-6 Wort Trendname auf Deutsch, z.B. "GLP-1 erobert die Nephrologie"]
+;;;
+WICHTIG: [1 vollständiger Satz mit Punkt am Ende: Warum sollte ein praktizierender Arzt das wissen?]
+;;;
+ZUSAMMENFASSUNG: [2 vollständige Sätze mit Punkt am Ende: Was ist der Trend und was bedeutet das klinisch?]"""
 
     # ------------------------------------------------------------------
     # Multi-provider + Anthropic fallback (with 24 h cache)
@@ -723,7 +783,7 @@ LABEL: [Catchy 3-6 Wort Trendname auf Deutsch, z.B. "GLP-1 erobert die Nephrolog
     text = cached_chat_completion(
         providers=providers,
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=250,
+        max_tokens=2048,
     )
 
     # ------------------------------------------------------------------
@@ -743,11 +803,22 @@ LABEL: [Catchy 3-6 Wort Trendname auf Deutsch, z.B. "GLP-1 erobert die Nephrolog
         elif part.upper().startswith("ZUSAMMENFASSUNG:"):
             cluster.trend_summary_de = part[16:].strip()
 
+    # Sanitize label — strip trailing punctuation artefacts
+    if cluster.smart_label_de:
+        cluster.smart_label_de = cluster.smart_label_de.rstrip(";:,. ").strip()
+        # Detect truncated labels (end with preposition or mid-word)
+        _bad = (" am", " im", " der", " die", " das", " und", " bei",
+                " für", " als", " zur", " zum", " mit", " von", " nach",
+                " des", " den", " dem", " auf", " aus", " über")
+        if any(cluster.smart_label_de.endswith(e) for e in _bad):
+            cluster.smart_label_de = cluster.topic_label
+
     # Fallback if parsing failed
     if not cluster.smart_label_de:
         cluster.smart_label_de = cluster.topic_label
     if not cluster.trend_summary_de:
-        cluster.trend_summary_de = text  # use full response
+        # Use warum_wichtig as summary fallback (not the raw LABEL/WICHTIG string)
+        cluster.trend_summary_de = cluster.warum_wichtig_de or cluster.topic_label
 
 
 def _fallback_summary_v2(cluster: TrendCluster, articles: list[Article]):
@@ -764,7 +835,7 @@ def _fallback_summary_v2(cluster: TrendCluster, articles: list[Article]):
     if cluster.momentum == "exploding":
         cluster.warum_wichtig_de = f"Stark steigendes Thema mit {count} neuen Artikeln — klinische Relevanz prüfen."
     elif cluster.is_cross_specialty:
-        cluster.warum_wichtig_de = f"Thema breitet sich über Fachgrenzen aus ({cluster.specialty_spread})."
+        cluster.warum_wichtig_de = f"Fachübergreifend: {cluster.specialty_spread}."
     elif cluster.dominant_study_type in ("Meta-Analyse", "RCT", "Leitlinie"):
         cluster.warum_wichtig_de = f"Hochwertige Evidenz ({cluster.dominant_study_type}) — praxisrelevant."
     else:
@@ -824,7 +895,7 @@ Antworte mit genau 1 Satz:"""
     text = cached_chat_completion(
         providers=providers,
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=100,
+        max_tokens=2048,
     )
     if text:
         return text
@@ -843,6 +914,186 @@ def _fallback_weekly_overview(clusters: list[TrendCluster]) -> str:
         name2 = second.smart_label_de or second.topic_label
         return f"Diese Woche dominiert {name} ({top.count_current} Artikel), gefolgt von {name2}."
     return f"Im Fokus diese Woche: {name} mit {top.count_current} neuen Artikeln."
+
+
+# ---------------------------------------------------------------------------
+# v2 Enrichments: Editorial, Sources, Sparkline
+# ---------------------------------------------------------------------------
+
+_GERMAN_PRESS_FRAGMENTS = [
+    "ärzteblatt", "aerzteblatt", "ärzte zeitung", "aerztezeitung",
+    "pharmazeutische zeitung", "apotheke adhoc", "medical tribune",
+]
+
+
+def _compute_source_diversity(cluster: TrendCluster, articles: list[Article]):
+    """Compute source diversity for a cluster."""
+    sources = set()
+    has_german = False
+    for a in articles:
+        src = (a.source or "").strip()
+        # Normalize: "Google News (Ärzteblatt)" → "Google News"
+        base_src = src.split("(")[0].strip() if "(" in src else src
+        sources.add(base_src)
+        if any(f in src.lower() for f in _GERMAN_PRESS_FRAGMENTS):
+            has_german = True
+
+    cluster.source_diversity_count = len(sources)
+    cluster.source_diversity_names = sorted(sources)[:8]
+    cluster.has_german_coverage = has_german
+    cluster.first_mover_chance = not has_german and len(sources) >= 2
+
+    if len(sources) >= 4:
+        cluster.source_diversity_rating = "hoch"
+    elif len(sources) >= 2:
+        cluster.source_diversity_rating = "mittel"
+    else:
+        cluster.source_diversity_rating = "niedrig"
+
+
+def _compute_editorial_urgency(cluster: TrendCluster):
+    """Determine editorial urgency based on momentum, evidence, and volume."""
+    # Safety alerts → always urgent
+    safety_keywords = ["rückruf", "warnung", "rote-hand", "bfarm"]
+    label_lower = cluster.topic_label.lower()
+    if any(kw in label_lower for kw in safety_keywords):
+        cluster.editorial_urgency = "sofort"
+        cluster.editorial_action_de = "Sicherheitswarnung — Sofort-Meldung prüfen"
+        cluster.editorial_color = "#f87171"
+        return
+
+    # Exploding + high evidence → this week
+    if cluster.momentum == "exploding":
+        cluster.editorial_urgency = "sofort"
+        cluster.editorial_action_de = "Stark wachsend — Erstberichterstattung empfohlen"
+        cluster.editorial_color = "#f87171"
+        return
+
+    # Rising + RCTs or Meta-Analyses
+    has_strong_evidence = any(
+        k in cluster.evidence_levels
+        for k in ("RCT", "Meta-Analyse", "Meta-Analysis", "Systematic Review",
+                   "Guideline", "Leitlinie")
+    )
+    if cluster.momentum == "rising" and has_strong_evidence:
+        cluster.editorial_urgency = "diese_woche"
+        evidence_types = [k for k in cluster.evidence_levels if cluster.evidence_levels[k] > 0]
+        cluster.editorial_action_de = (
+            f"Übersichtsartikel empfohlen — {', '.join(evidence_types[:2])} vorhanden"
+        )
+        cluster.editorial_color = "#fbbf24"
+        return
+
+    if cluster.momentum == "rising":
+        cluster.editorial_urgency = "diese_woche"
+        cluster.editorial_action_de = "Wachsender Trend — redaktionelle Beobachtung"
+        cluster.editorial_color = "#fbbf24"
+        return
+
+    # First-mover chance
+    if cluster.first_mover_chance and cluster.count_current >= 5:
+        cluster.editorial_urgency = "diese_woche"
+        cluster.editorial_action_de = "Noch keine dt. Fachpresse-Berichterstattung — First-Mover-Chance"
+        cluster.editorial_color = "#22d3ee"
+        return
+
+    # Default: observe
+    cluster.editorial_urgency = "beobachten"
+    cluster.editorial_action_de = "Beobachten — keine redaktionelle Dringlichkeit"
+    cluster.editorial_color = "#a0a0b8"
+
+
+def _compute_sparkline(cluster: TrendCluster, current: list[Article], days: int = 7):
+    """Compute 4-week sparkline data for a cluster."""
+    today = date.today()
+    keywords = set(cluster.topic_label.lower().replace(" + ", " ").split())
+
+    weekly_counts = [0, 0, 0, 0]  # [w-4, w-3, w-2, w-1(current)]
+
+    # We already have current articles; count by week
+    for a in current:
+        if a.id not in set(cluster.article_ids):
+            continue
+        if a.pub_date:
+            age_days = (today - a.pub_date).days
+            if age_days < 7:
+                weekly_counts[3] += 1
+
+    # For historical weeks, use the period articles we already fetched
+    # (count_previous = week -2, count_period_minus2 = week -3)
+    weekly_counts[2] = cluster.count_previous
+    weekly_counts[1] = cluster.count_period_minus2
+    weekly_counts[0] = max(0, cluster.count_period_minus2 - 1)  # Estimate w-4
+
+    cluster.sparkline_data = weekly_counts
+
+    # Determine trend phase
+    if weekly_counts[3] > 0 and weekly_counts[2] == 0 and weekly_counts[1] == 0:
+        cluster.trend_phase = "neu"
+    elif weekly_counts[3] > weekly_counts[2] > weekly_counts[1]:
+        cluster.trend_phase = "wachsend"
+    elif weekly_counts[3] >= weekly_counts[2] and weekly_counts[3] >= weekly_counts[1]:
+        cluster.trend_phase = "peak"
+    elif weekly_counts[3] < weekly_counts[2]:
+        cluster.trend_phase = "abflachend"
+    else:
+        cluster.trend_phase = "stabil"
+
+
+def _generate_storyline_pitches(cluster: TrendCluster, articles: list[Article]):
+    """Generate 2-3 editorial angle pitches using LLM."""
+    from src.config import get_provider_chain
+    from src.llm_client import chat_completion
+
+    providers = get_provider_chain("trend_summary")
+    if not providers:
+        cluster.storyline_pitches = []
+        return
+
+    # Build context from top articles
+    top_articles = sorted(articles, key=lambda a: a.relevance_score, reverse=True)[:5]
+    article_context = "\n".join(
+        f"- {a.title} (Score: {a.relevance_score:.0f}, Quelle: {a.source})"
+        for a in top_articles
+    )
+
+    system = (
+        "Du bist ein erfahrener Medizinredakteur. Generiere 2-3 konkrete Artikelwinkel "
+        "(Storyline-Pitches) für einen Trend-Cluster. Jeder Pitch soll ein konkreter "
+        "Artikelvorschlag sein, den ein Redakteur sofort umsetzen kann.\n\n"
+        "Antworte EXAKT als JSON-Array (kein Markdown):\n"
+        '[{"angle_de": "Konkreter Artikeltitel/Winkel", "format": "Übersicht|Meldung|Interview|Kommentar"}]'
+    )
+
+    user_msg = (
+        f"Trend: {cluster.smart_label_de or cluster.topic_label}\n"
+        f"Momentum: {cluster.momentum}\n"
+        f"Fachgebiete: {', '.join(cluster.specialties[:3])}\n"
+        f"Top-Artikel:\n{article_context}"
+    )
+
+    raw = chat_completion(
+        providers=providers,
+        messages=[{"role": "user", "content": user_msg}],
+        system=system,
+        max_tokens=1024,
+    )
+
+    if raw:
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[-1]
+        if cleaned.endswith("```"):
+            cleaned = cleaned.rsplit("```", 1)[0]
+        try:
+            pitches = json.loads(cleaned.strip())
+            if isinstance(pitches, list):
+                cluster.storyline_pitches = pitches[:3]
+                return
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    cluster.storyline_pitches = []
 
 
 # ---------------------------------------------------------------------------
@@ -900,6 +1151,16 @@ def compute_trends(
         # Clinical impact
         _compute_clinical_impact(cluster, cluster_articles)
 
+        # v2: Source diversity
+        _compute_source_diversity(cluster, cluster_articles)
+
+        # v2: Sparkline (4-week history)
+        _compute_sparkline(cluster, current)
+
+    # v2: Editorial urgency (needs momentum + evidence + source diversity computed)
+    for cluster in clusters:
+        _compute_editorial_urgency(cluster)
+
     # Sort by composite: momentum + clinical_impact + growth + avg_score + volume
     import math
     momentum_weights = {"exploding": 3, "rising": 2, "stable": 1, "falling": 0}
@@ -921,13 +1182,27 @@ def compute_trends(
     for i, cluster in enumerate(clusters):
         cluster.rank = i + 1
 
-    # Generate smart summaries (LLM calls)
+    # Generate smart summaries — skip LLM if all providers are rate-limited
+    # (avoids 60-120s blocking on the Feed page)
+    from src.llm_client import are_all_providers_rate_limited
+    from src.config import get_provider_chain
+    _llm_available = not are_all_providers_rate_limited(get_provider_chain("trend_summary"))
+
     for cluster in clusters:
         cluster_articles = [a for a in current if a.id in set(cluster.article_ids)]
-        _generate_trend_summary_v2(cluster, cluster_articles)
+        if _llm_available:
+            _generate_trend_summary_v2(cluster, cluster_articles)
+        else:
+            _fallback_summary_v2(cluster, cluster_articles)
 
-    # Weekly overview (1 additional LLM call)
-    weekly_overview = _generate_weekly_overview(clusters)
+    # v2: Storyline pitches (LLM, only for top clusters to save API calls)
+    if _llm_available:
+        for cluster in clusters[:4]:  # Top 4 clusters only
+            cluster_articles = [a for a in current if a.id in set(cluster.article_ids)]
+            _generate_storyline_pitches(cluster, cluster_articles)
+
+    # Weekly overview (1 additional LLM call — skip if rate-limited)
+    weekly_overview = _generate_weekly_overview(clusters) if _llm_available else ""
 
     logger.info("Found %d trend clusters", len(clusters))
     return clusters, weekly_overview
@@ -944,3 +1219,88 @@ def get_trend_articles(article_ids: list[int]) -> list[Article]:
             .order_by(col(Article.relevance_score).desc())
         )
         return list(session.exec(stmt).all())
+
+
+# ---------------------------------------------------------------------------
+# TrendCache — pre-compute and store/load from DB
+# ---------------------------------------------------------------------------
+
+def _cluster_to_dict(c: TrendCluster) -> dict:
+    """Serialize a TrendCluster to a JSON-friendly dict."""
+    from dataclasses import asdict
+    return asdict(c)
+
+
+def _dict_to_cluster(d: dict) -> TrendCluster:
+    """Deserialize a dict back to a TrendCluster."""
+    return TrendCluster(**d)
+
+
+def store_trends_cache(
+    clusters: list[TrendCluster],
+    weekly_overview: str = "",
+    cache_key: str = "trends_7d",
+):
+    """Store pre-computed trend clusters in the DB."""
+    from src.models import TrendCache, get_engine, get_session
+    get_engine()
+
+    data_json = json.dumps([_cluster_to_dict(c) for c in clusters], ensure_ascii=False)
+
+    with get_session() as session:
+        existing = session.exec(
+            select(TrendCache).where(TrendCache.cache_key == cache_key)
+        ).first()
+        if existing:
+            existing.data_json = data_json
+            existing.weekly_overview = weekly_overview
+            existing.cluster_count = len(clusters)
+            existing.computed_at = datetime.now(timezone.utc)
+        else:
+            session.add(TrendCache(
+                cache_key=cache_key,
+                data_json=data_json,
+                weekly_overview=weekly_overview,
+                cluster_count=len(clusters),
+            ))
+        session.commit()
+
+    logger.info("TrendCache stored: %d clusters (key=%s)", len(clusters), cache_key)
+
+
+def load_trends_cache(
+    cache_key: str = "trends_7d",
+    max_age_hours: int = 24,
+) -> Optional[tuple]:
+    """Load pre-computed trend clusters from the DB.
+
+    Returns (clusters, weekly_overview) or None if cache is missing/stale.
+    """
+    from src.models import TrendCache, get_engine, get_session
+    get_engine()
+
+    with get_session() as session:
+        cached = session.exec(
+            select(TrendCache).where(TrendCache.cache_key == cache_key)
+        ).first()
+
+        if not cached:
+            return None
+
+        # Check freshness (handle naive vs aware datetimes)
+        computed = cached.computed_at
+        if computed.tzinfo is None:
+            computed = computed.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - computed).total_seconds() / 3600
+        if age > max_age_hours:
+            logger.info("TrendCache stale (%.1fh > %dh)", age, max_age_hours)
+            return None
+
+        try:
+            raw_list = json.loads(cached.data_json)
+            clusters = [_dict_to_cluster(d) for d in raw_list]
+            logger.info("TrendCache loaded: %d clusters (%.1fh old)", len(clusters), age)
+            return clusters, cached.weekly_overview or ""
+        except (json.JSONDecodeError, TypeError) as exc:
+            logger.warning("TrendCache parse error: %s", exc)
+            return None

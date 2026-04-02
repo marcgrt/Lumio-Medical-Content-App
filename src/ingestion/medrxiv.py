@@ -32,6 +32,14 @@ async def _fetch_rxiv(
         return articles
 
     collection = data.get("collection", [])
+    if not collection:
+        msg = data.get("messages", [{}])[0]
+        logger.warning(
+            "%s returned 0 articles for %s → %s (API message: %s)",
+            source_name, start.isoformat(), end.isoformat(), msg,
+        )
+        return articles
+
     for item in collection:
         pub_date = None
         raw = item.get("date")

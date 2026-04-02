@@ -93,6 +93,7 @@ _RATE_LIMITS: Dict[str, Dict[str, int]] = {
     "gemini_flash_lite":{"rpm": 28, "rpd": 3_000},
     "gemini_pro":       {"rpm": 4,  "rpd": 25},      # free-tier; paid ≫ this
     "mistral":          {"rpm": 28, "rpd": 5_000},
+    "cerebras":         {"rpm": 28, "rpd": 1_000},
 }
 
 # {(provider_name, key_index): (date_str, count)}
@@ -212,6 +213,24 @@ def _is_rate_limited(provider_name: str) -> bool:
     if not keys:
         return True
     return all(_is_key_rate_limited(provider_name, i) for i in range(len(keys)))
+
+
+def are_all_providers_rate_limited(providers: list) -> bool:
+    """Check if ALL providers in a chain are rate-limited (429 or daily quota).
+
+    Use this to skip LLM calls entirely and use template fallbacks instead
+    of blocking the UI for 60-120s while retrying rate-limited APIs.
+    """
+    if not providers:
+        return True
+    for provider in providers:
+        keys = _get_key_pool(provider.api_key_env)
+        if not keys:
+            continue
+        # If any key on any provider is NOT rate-limited, we can try
+        if not all(_is_key_rate_limited(provider.name, i) for i in range(len(keys))):
+            return False
+    return True
 
 
 def get_usage_stats() -> Dict[str, dict]:
@@ -336,6 +355,48 @@ def _get_anthropic_client():
     except Exception as e:
         logger.warning("Could not init Anthropic client: %s", e)
         return None
+
+
+def _anthropic_provider_call(
+    provider,
+    messages: List[Dict[str, str]],
+    max_tokens: int,
+) -> Optional[str]:
+    """Call the Anthropic Messages API using the provider config."""
+    client = _get_anthropic_client()
+    if client is None:
+        return None
+
+    # Separate system messages from user/assistant messages
+    system_parts = []
+    chat_messages = []
+    for msg in messages:
+        if msg["role"] == "system":
+            system_parts.append(msg["content"])
+        else:
+            chat_messages.append(msg)
+
+    # Ensure messages start with 'user'
+    if not chat_messages or chat_messages[0]["role"] != "user":
+        chat_messages.insert(0, {"role": "user", "content": "Please help."})
+
+    try:
+        kwargs: dict = {
+            "model": provider.model,
+            "max_tokens": max_tokens,
+            "messages": chat_messages,
+            "timeout": provider.timeout,
+        }
+        if system_parts:
+            kwargs["system"] = "\n\n".join(system_parts)
+
+        response = client.messages.create(**kwargs)
+        if response.content:
+            _track_call(provider.name)
+            return response.content[0].text.strip()
+    except Exception as exc:
+        logger.warning("Anthropic provider call failed: %s", exc)
+    return None
 
 
 def _anthropic_chat(
@@ -468,12 +529,24 @@ def chat_completion(
 
             tokens = max_tokens or provider.max_tokens
             try:
-                response = client.chat.completions.create(
-                    model=provider.model,
-                    max_tokens=tokens,
-                    messages=full_messages,
-                )
-                text = response.choices[0].message.content
+                # Anthropic uses a different API format
+                if provider.name == "claude_sonnet":
+                    text = _anthropic_provider_call(provider, full_messages, tokens)
+                    if text is None:
+                        continue
+                else:
+                    # Gemini 2.5+ requires max_completion_tokens (not max_tokens)
+                    # to avoid premature truncation. Other providers accept both.
+                    _create_kwargs = dict(
+                        model=provider.model,
+                        messages=full_messages,
+                    )
+                    if "gemini" in provider.name:
+                        _create_kwargs["max_completion_tokens"] = tokens
+                    else:
+                        _create_kwargs["max_tokens"] = tokens
+                    response = client.chat.completions.create(**_create_kwargs)
+                    text = response.choices[0].message.content
                 _track_call(provider.name, key_idx)
                 # Advance rotation to next key for fairness
                 _key_rotation_idx[provider.name] = (key_idx + 1) % num_keys
@@ -495,12 +568,14 @@ def chat_completion(
                 continue
 
     # ------------------------------------------------------------------
-    # Anthropic SDK fallback (last resort)
+    # Anthropic SDK fallback — DISABLED for cost control.
+    # Claude is only used via explicit provider chain (artikel_entwurf).
+    # Uncomment below only if you want Claude as a last-resort for ALL tasks.
     # ------------------------------------------------------------------
-    user_messages = [m for m in messages if m.get("role") != "system"]
-    result = _anthropic_chat(user_messages or messages, system, max_tokens or 300)
-    if result:
-        return result
+    # user_messages = [m for m in messages if m.get("role") != "system"]
+    # result = _anthropic_chat(user_messages or messages, system, max_tokens or 1024)
+    # if result:
+    #     return result
 
     return None
 
@@ -520,12 +595,15 @@ def cached_chat_completion(
     Cache key = SHA-256(model_of_first_provider + system + user messages).
     """
     # Build a deterministic string for the cache key
+    # Include max_tokens so a higher limit invalidates old truncated responses
     model_hint = providers[0].model if providers else "anthropic"
     prompt_parts = []
     if system:
         prompt_parts.append(f"system:{system}")
     for m in messages:
         prompt_parts.append(f"{m.get('role', '')}:{m.get('content', '')}")
+    if max_tokens:
+        prompt_parts.append(f"max_tokens:{max_tokens}")
     prompt_text = "\n".join(prompt_parts)
 
     key = _cache_key(prompt_text, model_hint)

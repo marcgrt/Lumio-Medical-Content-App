@@ -27,6 +27,13 @@ async def _fetch_single_feed(
         logger.error("Google News RSS '%s' failed: %s", feed_name, exc)
         return articles
 
+    if not feed.entries:
+        logger.warning(
+            "Google News RSS '%s' returned 0 entries — possible rate limit or URL change. URL: %s",
+            feed_name, feed_url,
+        )
+        return articles
+
     for entry in feed.entries:
         title = entry.get("title", "").strip()
         if not title:
@@ -63,6 +70,7 @@ async def _fetch_single_feed(
                 journal="Google News",
                 pub_date=pub_date,
                 language="de",
+                source_category="news_aggregation",
             )
         )
 

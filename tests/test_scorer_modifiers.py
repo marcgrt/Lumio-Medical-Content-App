@@ -39,15 +39,16 @@ class TestRedaktionsBonus:
 
 class TestInterdisciplinaryBonus:
     def test_single_specialty_no_bonus(self):
-        a = make_article(title="Cardiac surgery outcomes",
-                         abstract="Heart failure treatment results")
+        # Use text that only triggers one specialty (Kardiologie)
+        a = make_article(title="Atrial fibrillation management",
+                         abstract="Coronary artery stent placement outcomes")
         assert _interdisciplinary_bonus(a) == 0.0
 
     def test_two_specialties_small_bonus(self):
-        # Cardiology + Nephrology keywords
+        # Cardiology + Pneumologie keywords (exactly 2 specialties)
         a = make_article(
-            title="Cardiorenal syndrome treatment",
-            abstract="Heart failure and kidney disease interaction with dialysis"
+            title="Cardiac complications in COPD patients",
+            abstract="Heart failure and pulmonary hypertension interaction"
         )
         bonus = _interdisciplinary_bonus(a)
         assert bonus == 5.0

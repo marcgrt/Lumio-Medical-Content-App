@@ -42,8 +42,9 @@ def match_article(article: Article, watchlist: Watchlist) -> bool:
     if not keywords:
         return False
 
-    # At least one keyword must match (word-boundary aware)
-    if not any(re.search(rf'\b{re.escape(kw)}\b', text) for kw in keywords):
+    # At least one keyword must match (substring check — supports German
+    # compound words like "Herzinsuffizienztherapie" containing "Herzinsuffizienz")
+    if not any(kw in text for kw in keywords):
         return False
 
     # Optional: specialty filter

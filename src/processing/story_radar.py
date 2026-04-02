@@ -132,7 +132,7 @@ HEADLINE: [Catchy deutsche Headline fuer den Redaktions-Pitch, max 80 Zeichen];;
         providers=providers,
         messages=[{"role": "user", "content": user_prompt}],
         system=system_prompt,
-        max_tokens=400,
+        max_tokens=1024,
     )
 
     pitch = StoryPitch(

@@ -243,10 +243,14 @@ def _load_gap_report() -> dict:
         return {
             "coverage_gaps": [],
             "topic_gaps": [],
+            "stale_content": [],
+            "regulatory_gaps": [],
             "summary_stats": {
                 "total_specialties": len(SPECIALTY_MESH),
                 "underserved_count": 0,
                 "trending_uncovered": 0,
+                "stale_count": 0,
+                "regulatory_gap_count": 0,
                 "biggest_gap": None,
             },
             "generated_at": None,
@@ -258,18 +262,24 @@ def _render_luecken_detektor():
     report = _load_gap_report()
     coverage_gaps = report.get("coverage_gaps", [])
     topic_gaps = report.get("topic_gaps", [])
+    stale_content = report.get("stale_content", [])
+    regulatory_gaps = report.get("regulatory_gaps", [])
+    demand_gaps = report.get("demand_gaps", [])
     stats = report.get("summary_stats", {})
 
     with st.expander("\U0001f50d Lücken-Detektor — Redaktionelle Blindstellen", expanded=True):
 
         underserved = stats.get("underserved_count", 0)
         uncovered = stats.get("trending_uncovered", 0)
+        stale_count = stats.get("stale_count", 0)
+        reg_count = stats.get("regulatory_gap_count", 0)
+        total_issues = underserved + uncovered + stale_count + reg_count
 
-        if underserved == 0 and uncovered == 0:
+        if total_issues == 0:
             st.markdown(
                 '<div class="med-card" style="text-align:center;padding:20px">'
                 '<div style="font-size:1.2rem;margin-bottom:6px">'
-                'Keine Lücken erkannt — gute redaktionelle Abdeckung! \U0001f389</div>'
+                'Keine L\u00fccken erkannt \u2014 gute redaktionelle Abdeckung! \U0001f389</div>'
                 '<div style="font-size:0.8rem;color:var(--c-text-tertiary)">'
                 'Alle Fachgebiete und Trend-Themen sind redaktionell betreut.</div>'
                 '</div>',
@@ -284,9 +294,13 @@ def _render_luecken_detektor():
             f'<div style="font-size:0.85rem;color:var(--c-text)">'
             f'\U0001f534 <b>{underserved}</b> Fachgebiet(e) unterversorgt</div>'
             f'<div style="font-size:0.85rem;color:var(--c-text)">'
-            f'\U0001f7e1 <b>{uncovered}</b> Trend-Themen unbearbeitet</div>'
-            f'<div style="font-size:0.78rem;color:var(--c-text-tertiary)">'
-            f'Größte Lücke: {_esc(biggest)}</div>'
+            f'\U0001f7e1 <b>{uncovered}</b> Trends unbearbeitet</div>'
+            f'<div style="font-size:0.85rem;color:var(--c-text)">'
+            f'\U0001f4c9 <b>{stale_count}</b> potenziell veraltet</div>'
+            f'<div style="font-size:0.85rem;color:var(--c-text)">'
+            f'\U0001f3db\ufe0f <b>{reg_count}</b> Beh\u00f6rden ohne Einordnung</div>'
+            f'<div style="font-size:0.85rem;color:var(--c-text)">'
+            f'\U0001f50d <b>{len(demand_gaps)}</b> Nachfrage-L\u00fccken (GA4)</div>'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -308,6 +322,104 @@ def _render_luecken_detektor():
             )
             for tgap in topic_gaps:
                 _render_topic_gap_card(tgap)
+
+        # --- Regulatorische Lücken ---
+        if regulatory_gaps:
+            st.markdown(
+                '<div class="section-header" style="font-size:0.95rem;margin-top:16px;margin-bottom:8px">'
+                '\U0001f3db\ufe0f Beh\u00f6rden-Meldungen ohne Einordnung</div>',
+                unsafe_allow_html=True,
+            )
+            for rgap in regulatory_gaps[:10]:
+                _age_color = "#f87171" if rgap.age_days <= 3 else "#fbbf24" if rgap.age_days <= 7 else "#a0a0b8"
+                _age_label = "Heute" if rgap.age_days == 0 else f"Vor {rgap.age_days}d"
+                st.markdown(
+                    f'<div class="med-card" style="padding:12px 16px;margin-bottom:6px">'
+                    f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;flex-wrap:wrap">'
+                    f'<span style="font-size:0.72rem;font-weight:700;color:{_age_color};'
+                    f'background:{_age_color}22;padding:2px 8px;border-radius:6px">{_age_label}</span>'
+                    f'<span style="font-size:0.72rem;font-weight:600;color:var(--c-text-muted)">'
+                    f'{_esc(rgap.source)}</span>'
+                    f'{score_pill(rgap.relevance_score)}'
+                    f'</div>'
+                    f'<div style="font-size:0.85rem;font-weight:600;color:var(--c-text);margin-bottom:4px">'
+                    f'{_esc(rgap.title)}</div>'
+                    f'<div style="font-size:0.75rem;color:var(--c-text-muted);line-height:1.4">'
+                    f'{_esc(rgap.suggestion_de)}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+        # --- Content Freshness ---
+        if stale_content:
+            st.markdown(
+                '<div class="section-header" style="font-size:0.95rem;margin-top:16px;margin-bottom:8px">'
+                '\U0001f4c9 Potenziell veraltete Artikel</div>'
+                '<div style="font-size:0.75rem;color:var(--c-text-tertiary);margin-bottom:10px">'
+                'Freigegebene Artikel, zu denen neuere, h\u00f6her bewertete Artikel existieren.</div>',
+                unsafe_allow_html=True,
+            )
+            for sc in stale_content[:10]:
+                _fresh_color = "#f87171" if sc.freshness_score < 30 else "#fbbf24" if sc.freshness_score < 70 else "#4ade80"
+                _fresh_pct = int(sc.freshness_score)
+                st.markdown(
+                    f'<div class="med-card" style="padding:12px 16px;margin-bottom:6px">'
+                    f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">'
+                    f'<span style="font-size:0.72rem;font-weight:700;color:{_fresh_color};'
+                    f'background:{_fresh_color}22;padding:2px 8px;border-radius:6px">'
+                    f'Freshness {_fresh_pct}%</span>'
+                    f'<span style="font-size:0.72rem;color:var(--c-text-muted)">'
+                    f'{_esc(sc.specialty)} \u00b7 {sc.age_days}d alt</span>'
+                    f'</div>'
+                    f'<div style="font-size:0.82rem;font-weight:600;color:var(--c-text);margin-bottom:3px">'
+                    f'{_esc(sc.title)}</div>'
+                    f'<div style="font-size:0.75rem;color:var(--c-text-muted);line-height:1.4">'
+                    f'{_esc(sc.reason)}</div>'
+                    f'{"<div style=" + chr(34) + "font-size:0.72rem;color:var(--c-accent);margin-top:4px" + chr(34) + ">" + chr(8594) + " " + _esc(sc.newer_article_title or "") + "</div>" if sc.newer_article_title else ""}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+        # --- Nachfrage-Lücken (GA4 Signal) ---
+        if demand_gaps:
+            st.markdown(
+                '<div class="section-header" style="font-size:0.95rem;margin-top:16px;margin-bottom:8px">'
+                '\U0001f50d Nachfrage-L\u00fccken (GA4)</div>'
+                '<div style="font-size:0.75rem;color:var(--c-text-tertiary);margin-bottom:10px">'
+                'Suchbegriffe von \u00c4rzten, zu denen wenige oder keine Artikel existieren.</div>',
+                unsafe_allow_html=True,
+            )
+            for dg in demand_gaps:
+                _sev_color = {"critical": "#f87171", "warning": "#fbbf24", "info": "#60a5fa"}[dg["gap_severity"]]
+                _count_label = "Keine Artikel" if dg["lumio_article_count"] == 0 else f"{dg['lumio_article_count']} Artikel"
+                st.markdown(
+                    f'<div class="med-card" style="padding:12px 16px;margin-bottom:6px">'
+                    f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;flex-wrap:wrap">'
+                    f'<span style="font-size:0.82rem;font-weight:700;color:{_sev_color}">'
+                    f'\u201e{_esc(dg["term"])}\u201c</span>'
+                    f'<span style="font-size:0.72rem;font-weight:600;color:var(--c-text-muted);'
+                    f'background:rgba(255,255,255,0.06);padding:2px 8px;border-radius:6px">'
+                    f'{dg["search_count"]} Suchen</span>'
+                    f'<span style="font-size:0.72rem;color:{_sev_color};'
+                    f'background:{_sev_color}22;padding:2px 8px;border-radius:6px">'
+                    f'{_count_label}</span>'
+                    f'</div>'
+                    f'<div style="font-size:0.75rem;color:var(--c-text-muted);line-height:1.4">'
+                    f'{_esc(dg["suggestion"])}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+        elif not demand_gaps and not stats.get("demand_gap_count"):
+            # GA4 nicht konfiguriert — zeige Hinweis
+            st.markdown(
+                '<div style="font-size:0.78rem;color:var(--c-text-tertiary);margin-top:12px;'
+                'padding:10px;border:1px dashed rgba(255,255,255,0.1);border-radius:8px;text-align:center">'
+                '\U0001f50c GA4-Verbindung nicht konfiguriert. '
+                'Setze <code>LUMIO_GA4_PROPERTY_ID</code> und '
+                '<code>LUMIO_GA4_CREDENTIALS_PATH</code> um Nachfrage-L\u00fccken zu sehen.'
+                '</div>',
+                unsafe_allow_html=True,
+            )
 
 
 def _render_coverage_gap_card(gap):

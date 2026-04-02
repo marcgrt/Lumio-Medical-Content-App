@@ -80,7 +80,7 @@ async def fetch_europe_pmc(
                     if r.get("pubTypeList", {}).get("pubType")
                     else None,
                     mesh_terms=mesh_terms,
-                    language=r.get("language", "eng"),
+                    language="en" if r.get("language", "eng") == "eng" else r.get("language"),
                 )
             )
 

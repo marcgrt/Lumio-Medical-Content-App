@@ -27,6 +27,14 @@ EXIT_CODE=${PIPESTATUS[0]}
 echo "" | tee -a "$LOG_FILE"
 echo "=== Pipeline End: $(date) | Exit: $EXIT_CODE ===" | tee -a "$LOG_FILE"
 
+# Run health check after pipeline (notifies admin on failure)
+echo "--- Running Health Check ---" | tee -a "$LOG_FILE"
+PYTHONPATH="$PROJECT_DIR" python -m src.health_check 2>&1 | tee -a "$LOG_FILE"
+HEALTH_EXIT=$?
+if [ $HEALTH_EXIT -ne 0 ]; then
+    echo "!!! HEALTH CHECK FAILED (exit $HEALTH_EXIT) — Admin notified in-app !!!" | tee -a "$LOG_FILE"
+fi
+
 # Cleanup logs older than 14 days
 find "$LOG_DIR" -name "pipeline_*.log" -mtime +14 -delete 2>/dev/null || true
 

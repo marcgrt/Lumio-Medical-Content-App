@@ -5,85 +5,150 @@ from datetime import date
 import streamlit as st
 
 
+# Glass button inline CSS + JS for iframe-embedded buttons
+# (matches main app glass morphism style)
+def _glass_btn_css():
+    """Return glass button CSS, theme-aware."""
+    import streamlit as st
+    is_esanum = st.session_state.get("theme", "dark") == "esanum"
+    if is_esanum:
+        return """<style>
+  body { margin: 0; background: transparent; }
+  .glass-btn {
+    position: relative; overflow: hidden;
+    font-family: 'Inter','Open Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    border-radius: 9999px; font-weight: 600; font-size: 0.82rem;
+    padding: 8px 20px; white-space: nowrap; min-height: 36px;
+    cursor: pointer; width: 100%;
+    transition: transform 0.25s ease, box-shadow 0.3s ease, background 0.3s ease;
+    border: 1px solid #005461; background: #005461; color: #FFFFFF;
+    box-shadow: 0 2px 8px rgba(0,84,97,0.15); backdrop-filter: none;
+  }
+  .glass-btn:hover { background: #003E48; border-color: #003E48; color: #FFFFFF;
+    transform: translateY(-1px); box-shadow: 0 4px 16px rgba(0,84,97,0.25); }
+  .glass-btn:active { transform: translateY(0) scale(0.97); }
+  .glass-btn.success { background: #49661E; border-color: #49661E; color: #FFFFFF; }
+</style>"""
+    return """<style>
+  body { margin: 0; background: transparent; }
+  .glass-btn {
+    position: relative;
+    overflow: hidden;
+    font-family: 'Inter', 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    border-radius: 9999px;
+    font-weight: 600;
+    font-size: 0.82rem;
+    padding: 8px 20px;
+    white-space: nowrap;
+    min-height: 36px;
+    cursor: pointer;
+    width: 100%;
+    transition: transform 0.25s ease, box-shadow 0.3s ease,
+        border-color 0.3s ease, background 0.3s ease;
+    border: 1px solid rgba(132,204,22,0.30);
+    background: linear-gradient(135deg,
+        rgba(132,204,22,0.25) 0%, rgba(132,204,22,0.12) 50%,
+        rgba(132,204,22,0.20) 100%);
+    backdrop-filter: blur(12px) saturate(1.4);
+    color: #d9f99d;
+    box-shadow: 0 0 12px rgba(132,204,22,0.10),
+        0 2px 8px rgba(0,0,0,0.25),
+        inset 0 1px 0 rgba(255,255,255,0.10);
+  }
+  .glass-btn:hover {
+    transform: translateY(-1px);
+    border-color: rgba(132,204,22,0.50);
+    background: linear-gradient(135deg,
+        rgba(132,204,22,0.35) 0%, rgba(132,204,22,0.18) 50%,
+        rgba(132,204,22,0.30) 100%);
+    box-shadow: 0 0 28px rgba(132,204,22,0.22),
+        0 4px 16px rgba(0,0,0,0.25);
+    color: #ecfccb;
+  }
+  .glass-btn:active { transform: translateY(0) scale(0.97); }
+  .glass-btn.success {
+    border-color: rgba(34,197,94,0.50);
+    background: linear-gradient(135deg, rgba(34,197,94,0.30), rgba(34,197,94,0.15));
+    color: #bbf7d0;
+  }
+</style>"""
+
+
+def _get_glass_btn_css():
+    return _glass_btn_css()
+
+
 def _copy_html_button(html_content: str, button_label: str, key: str):
-    """Render a button that copies HTML content to clipboard via JS."""
+    """Render a glass-style button that copies HTML content to clipboard via JS."""
     import base64
     b64 = base64.b64encode(html_content.encode("utf-8")).decode("ascii")
     st.components.v1.html(f"""
-    <button id="btn_{key}" style="
-        background: #84cc16; color: #0a0a1a; border: none; border-radius: 8px;
-        padding: 10px 20px; font-size: 14px; font-weight: 500; cursor: pointer;
-        width: 100%; transition: background 0.2s;
-        font-family: Inter, -apple-system, 'Segoe UI', sans-serif;
-    " onmouseover="this.style.background='#a3e635'"
-      onmouseout="this.style.background='#84cc16'"
+    {_get_glass_btn_css()}
+    <button id="btn_{key}" class="glass-btn"
       onclick="
+        var self = this;
         try {{
-            const html = atob('{b64}');
-            const blob = new Blob([html], {{type: 'text/html'}});
-            const item = new ClipboardItem({{'text/html': blob, 'text/plain': new Blob([html], {{type: 'text/plain'}})}});
-            navigator.clipboard.write([item]).then(() => {{
-                this.textContent = 'Kopiert!';
-                this.style.background = '#22c55e';
-                setTimeout(() => {{
-                    this.textContent = '{button_label}';
-                    this.style.background = '#84cc16';
+            var html = atob('{b64}');
+            var blob = new Blob([html], {{type: 'text/html'}});
+            var item = new ClipboardItem({{'text/html': blob, 'text/plain': new Blob([html], {{type: 'text/plain'}})}});
+            navigator.clipboard.write([item]).then(function() {{
+                self.textContent = '\u2705 Kopiert!';
+                self.classList.add('success');
+                setTimeout(function() {{
+                    self.textContent = '{button_label}';
+                    self.classList.remove('success');
                 }}, 2000);
-            }}).catch(() => {{
-                const ta = document.createElement('textarea');
+            }}).catch(function() {{
+                var ta = document.createElement('textarea');
                 ta.value = html;
                 document.body.appendChild(ta);
                 ta.select();
                 document.execCommand('copy');
                 document.body.removeChild(ta);
-                this.textContent = 'Kopiert!';
-                this.style.background = '#22c55e';
-                setTimeout(() => {{
-                    this.textContent = '{button_label}';
-                    this.style.background = '#84cc16';
+                self.textContent = '\u2705 Kopiert!';
+                self.classList.add('success');
+                setTimeout(function() {{
+                    self.textContent = '{button_label}';
+                    self.classList.remove('success');
                 }}, 2000);
             }});
         }} catch(e) {{
-            this.textContent = 'Fehler';
-            setTimeout(() => {{ this.textContent = '{button_label}'; }}, 2000);
+            self.textContent = 'Kopieren fehlgeschlagen';
+            setTimeout(function() {{ self.textContent = '{button_label}'; }}, 3000);
         }}
     ">{button_label}</button>
     """, height=50)
 
 
 def _download_html_button(html_content: str, button_label: str, filename: str, key: str):
-    """Render a button that triggers a browser download of HTML content."""
+    """Glass-style button that triggers download via data-URI in parent window."""
     import base64
     b64 = base64.b64encode(html_content.encode("utf-8")).decode("ascii")
     st.components.v1.html(f"""
-    <button id="btn_{key}" style="
-        background: #84cc16; color: #0a0a1a; border: none; border-radius: 8px;
-        padding: 10px 20px; font-size: 14px; font-weight: 500; cursor: pointer;
-        width: 100%; transition: background 0.2s;
-        font-family: Inter, -apple-system, 'Segoe UI', sans-serif;
-    " onmouseover="this.style.background='#a3e635'"
-      onmouseout="this.style.background='#84cc16'"
+    {_get_glass_btn_css()}
+    <button id="btn_{key}" class="glass-btn"
       onclick="
+        var self = this;
         try {{
-            const html = atob('{b64}');
-            const blob = new Blob([html], {{type: 'text/html'}});
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
+            var b64 = '{b64}';
+            var html = atob(b64);
+            var dataUri = 'data:text/html;base64,' + b64;
+            var a = window.parent.document.createElement('a');
+            a.href = dataUri;
             a.download = '{filename}';
-            document.body.appendChild(a);
+            a.style.display = 'none';
+            window.parent.document.body.appendChild(a);
             a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            this.textContent = 'Heruntergeladen!';
-            this.style.background = '#22c55e';
-            setTimeout(() => {{
-                this.textContent = '{button_label}';
-                this.style.background = '#84cc16';
+            window.parent.document.body.removeChild(a);
+            self.textContent = '\u2705 Heruntergeladen!';
+            self.classList.add('success');
+            setTimeout(function() {{
+                self.textContent = '{button_label}';
+                self.classList.remove('success');
             }}, 2000);
         }} catch(e) {{
-            this.textContent = 'Fehler';
-            setTimeout(() => {{ this.textContent = '{button_label}'; }}, 2000);
+            self.textContent = '\u274c Fehlgeschlagen';
+            setTimeout(function() {{ self.textContent = '{button_label}'; }}, 3000);
         }}
     ">{button_label}</button>
     """, height=50)
@@ -162,7 +227,7 @@ def render_versand():
         st.markdown(
             '<div style="text-align:center;padding:24px 12px;color:var(--c-text-muted);font-size:0.85rem">'
             'Keine Watchlists vorhanden.<br>'
-            'Erstelle eine im <b>Feed</b>-Tab, um Themen-Pakete zu generieren.'
+            'Erstelle eine in der <b>Seitenleiste</b>, um Themen-Pakete zu generieren.'
             '</div>',
             unsafe_allow_html=True,
         )

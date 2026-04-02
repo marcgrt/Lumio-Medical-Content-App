@@ -62,11 +62,11 @@ def _keyword_boost(article: Article, _text: str = "") -> float:
     text = _text or f"{article.title or ''} {article.abstract or ''}".lower()
     boost = 0.0
     if any(kw in text for kw in SAFETY_KEYWORDS):
-        boost = max(boost, SAFETY_BOOST)
+        boost += SAFETY_BOOST
     if any(kw in text for kw in GUIDELINE_KEYWORDS):
-        boost = max(boost, GUIDELINE_BOOST)
+        boost += GUIDELINE_BOOST
     if any(kw in text for kw in LANDMARK_KEYWORDS):
-        boost = max(boost, LANDMARK_BOOST)
+        boost += LANDMARK_BOOST
     return boost
 
 
@@ -292,8 +292,11 @@ def _industry_news_modifier(article: Article, _text: str = "") -> float:
     return -12.0
 
 
-def compute_relevance_score(article: Article) -> Tuple[float, dict]:
-    """Compute composite relevance score (0-100) and breakdown dict."""
+def compute_relevance_score_v1(article: Article) -> Tuple[float, dict]:
+    """Compute v1 composite relevance score (0-100) and breakdown dict.
+
+    Kept for backward compatibility — renamed from compute_relevance_score.
+    """
     # Build text once, pass to sub-functions to avoid redundant construction
     _text = f"{article.title or ''} {article.abstract or ''}".lower()
 
@@ -339,11 +342,246 @@ def compute_relevance_score(article: Article) -> Tuple[float, dict]:
     return final, breakdown
 
 
+# Alias for backward compatibility
+compute_relevance_score = compute_relevance_score_v1
+
+
 # ---------------------------------------------------------------------------
-# LLM-based scoring (esanum 5-dimension model)
+# Rule-based v2 scoring (6-dimension fallback)
 # ---------------------------------------------------------------------------
 
-_LLM_SCORING_SYSTEM_PROMPT = """\
+# clinical_action_relevance keyword tiers
+_CAR_HIGH_KW = [
+    "rückruf", "rote-hand-brief", "rote hand brief", "dosierung",
+    "kontraindikation", "leitlinie", "neue therapie", "zulassung",
+]
+_CAR_MEDIUM_KW = [
+    "therapie", "behandlung", "diagnostik", "screening", "prävention",
+]
+_CAR_LOW_KW = [
+    "studie zeigt", "daten", "ergebnisse", "analyse",
+]
+
+# topic_appeal keyword tiers
+_TA_VERY_HIGH_KW = [
+    "ärztemangel", "honorar", "burnout", "arbeitszeitgesetz",
+    "krankenhausreform", "regress", "kassenzulassung",
+]
+_TA_HIGH_KW = [
+    "epa", "digitalisierung", "telematik", "bürokratie",
+    "work-life-balance", "ki diagnostik",
+]
+_TA_MEDIUM_KW = [
+    "leitlinie", "kongress", "fortbildung", "cme",
+]
+
+# novelty keyword tiers
+_NOV_HIGH_KW = [
+    "first-in-class", "erstmals", "first", "breakthrough", "neuartig",
+]
+_NOV_MED_HIGH_KW = [
+    "phase iii", "phase 3", "zulassung", "approval",
+]
+_NOV_MED_KW = [
+    "update", "neue daten",
+]
+_NOV_LOW_KW = [
+    "übersicht", "review", "zusammenfassung",
+]
+
+# Source authority tiers (journal fragment → score 0-12)
+_SA_TIERS: dict[str, int] = {
+    # Tier 1 (12)
+    "new england journal of medicine": 12, "nejm": 12,
+    "lancet": 12, "jama": 12, "bmj": 12,
+    "nature medicine": 12, "nature": 12,
+    # Tier 2 (10)
+    "circulation": 10, "journal of clinical oncology": 10, "jco": 10,
+    "european heart journal": 10, "annals of internal medicine": 10,
+    # Tier 2b (9)
+    "deutsches ärzteblatt": 9, "deutsches arzteblatt": 9, "aerzteblatt": 9,
+    # Tier 3 (8)
+    "gut": 8, "blood": 8, "diabetes care": 8, "brain": 8, "chest": 8,
+    # Tier 3b (7)
+    "ärzte zeitung": 7, "aerztezeitung": 7, "pharmazeutische zeitung": 7,
+    # Tier 5 — preprints (3)
+    "medrxiv": 3, "biorxiv": 3,
+}
+
+
+def compute_relevance_score_v2(article: Article) -> Tuple[float, dict]:
+    """Compute v2 rule-based fallback score (6 dimensions, sum = 0-100).
+
+    Produces approximate v2 scores when LLM scoring is unavailable.
+    """
+    _text = f"{article.title or ''} {article.abstract or ''}".lower()
+    abstract = article.abstract or ""
+    abstract_words = len(abstract.split())
+
+    # --- 1. clinical_action_relevance (0-20) ---
+    car = 6  # default
+    if any(kw in _text for kw in _CAR_HIGH_KW):
+        car = 16  # midpoint of 15-18
+    elif any(kw in _text for kw in _CAR_MEDIUM_KW):
+        car = 11  # midpoint of 9-14
+    elif any(kw in _text for kw in _CAR_LOW_KW):
+        car = 6   # midpoint of 4-8
+
+    # --- 2. evidence_depth (0-20) ---
+    ed = 8  # default
+    text_with_type = f"{_text} {(article.study_type or '').lower()}"
+    if any(kw in text_with_type for kw in ["meta-analysis", "meta analysis", "systematic review"]):
+        ed = 18
+    elif any(kw in text_with_type for kw in ["randomized", "randomised", "rct"]):
+        ed = 16
+    elif "cohort study" in text_with_type or "cohort" in text_with_type:
+        ed = 12
+    elif any(kw in text_with_type for kw in ["editorial", "review", "übersichtsarbeit"]):
+        ed = 11
+    elif any(kw in text_with_type for kw in ["case-control", "case control"]):
+        ed = 10
+    elif any(kw in text_with_type for kw in ["case report", "case series"]):
+        ed = 6
+    elif any(kw in text_with_type for kw in ["press release", "pressemitteilung"]):
+        ed = 4
+
+    # Bonus: abstract >200 words AND ≥3 citation signals
+    citation_signals = sum(1 for sig in ["et al.", "et al,", "references", "bibliography", "cited"]
+                          if sig in _text)
+    if abstract_words > 200 and citation_signals >= 3:
+        ed = min(20, ed + 2)
+
+    # --- 3. topic_appeal (0-20) ---
+    ta = 9  # default
+    if any(kw in _text for kw in _TA_VERY_HIGH_KW):
+        ta = 17  # midpoint of 16-19
+    elif any(kw in _text for kw in _TA_HIGH_KW):
+        ta = 13  # midpoint of 12-15
+    elif any(kw in _text for kw in _TA_MEDIUM_KW):
+        ta = 9   # midpoint of 8-11
+
+    # Interdisciplinary bonus
+    from src.config import SPECIALTY_MESH
+    text_for_spec = f"{_text} {(article.mesh_terms or '').lower()}"
+    spec_hits = sum(1 for keywords in SPECIALTY_MESH.values()
+                    if any(kw in text_for_spec for kw in keywords))
+    if spec_hits >= 3:
+        ta = min(20, ta + 4)
+    elif spec_hits >= 2:
+        ta = min(20, ta + 2)
+
+    # --- 4. novelty (0-16) ---
+    nov = 7  # default
+    if any(kw in _text for kw in _NOV_HIGH_KW):
+        nov = 14
+    elif any(kw in _text for kw in _NOV_MED_HIGH_KW):
+        nov = 11
+    elif any(kw in _text for kw in _NOV_MED_KW):
+        nov = 9
+    elif any(kw in _text for kw in _NOV_LOW_KW):
+        nov = 5
+
+    # Date modifier
+    if article.pub_date:
+        days_old = max(0, (date.today() - article.pub_date).days)
+        if days_old == 0:
+            date_mult = 1.0
+        elif days_old <= 3:
+            date_mult = 0.95
+        elif days_old <= 7:
+            date_mult = 0.85
+        elif days_old <= 14:
+            date_mult = 0.70
+        else:
+            date_mult = 0.55
+        nov = round(nov * date_mult)
+
+    nov = min(16, max(0, nov))
+
+    # --- 5. source_authority (0-12) ---
+    sa = 5  # default (peer-reviewed)
+    journal_lower = (article.journal or "").lower()
+    source_lower = (article.source or "").lower()
+
+    # Check for press release in text/source
+    if any(kw in _text or kw in source_lower for kw in ["press release", "pressemitteilung"]):
+        sa = 1
+    else:
+        for fragment, score in _SA_TIERS.items():
+            if fragment in journal_lower or fragment in source_lower:
+                sa = score
+                break
+
+    # --- 6. presentation_quality (0-12) ---
+    pq = 4  # default base
+
+    # Abstract length bonus
+    if abstract_words >= 200:
+        pq += 4
+    elif abstract_words >= 80:
+        pq += 2
+
+    # IMRAD detection
+    imrad_markers = [
+        "background:", "objective:", "methods:", "method:", "results:",
+        "conclusion:", "conclusions:", "hintergrund:", "methoden:",
+        "ergebnisse:", "schlussfolgerung:", "design:", "findings:",
+        "aim:", "purpose:", "discussion:", "fazit:",
+    ]
+    imrad_hits = sum(1 for m in imrad_markers if m in abstract.lower())
+    if imrad_hits >= 2:
+        pq += 3
+
+    # DOI present
+    if article.doi and len(article.doi) > 5:
+        pq += 1
+
+    # Paywall penalty
+    if abstract_words < 30:
+        is_paywall = any(pw in journal_lower for pw in [
+            "nejm", "new england", "jama", "lancet", "annals of internal",
+            "circulation", "european heart",
+        ])
+        if is_paywall:
+            pq -= 4
+
+    pq = min(12, max(0, pq))
+
+    # --- Total ---
+    total = round(min(100.0, max(0.0, float(car + ed + ta + nov + sa + pq))), 1)
+
+    if total >= 70:
+        tier = "TOP"
+    elif total >= 45:
+        tier = "RELEVANT"
+    else:
+        tier = "MONITOR"
+
+    breakdown = {
+        "scorer": "rule_v2",
+        "scoring_version": "v2",
+        "estimated": True,
+        "scores": {
+            "clinical_action_relevance": {"score": car, "reason": "Rule-based estimate"},
+            "evidence_depth": {"score": ed, "reason": "Rule-based estimate"},
+            "topic_appeal": {"score": ta, "reason": "Rule-based estimate"},
+            "novelty": {"score": nov, "reason": "Rule-based estimate"},
+            "source_authority": {"score": sa, "reason": "Rule-based estimate"},
+            "presentation_quality": {"score": pq, "reason": "Rule-based estimate"},
+        },
+        "total": total,
+        "tier": tier,
+        "one_line_summary": "",
+    }
+
+    return total, breakdown
+
+
+# ---------------------------------------------------------------------------
+# LLM-based scoring (v2: 6-dimension model)
+# ---------------------------------------------------------------------------
+
+_LLM_SCORING_SYSTEM_PROMPT_V1 = """\
 Du bist ein medizinischer Relevanz-Scorer für ein Ärzte-Dashboard.
 Bewerte den Artikel in 5 Dimensionen (je 0-20 Punkte).
 
@@ -367,9 +605,116 @@ Spezialistenthema: 14. Seltene Erkrankung: 8. Rein akademisch: 4.
 5. QUELLENQUALITÄT (0-20): NEJM/Lancet/BMJ/JAMA: 20. IF>5 Journal: 16. \
 Ärzteblatt/Ärztezeitung: 14. IF 2-5: 12. Allgemeine News: 6."""
 
+_LLM_SCORING_SYSTEM_PROMPT = """\
+Du bist ein medizinischer Relevanz-Scorer für eine Ärzteplattform mit 369.000 registrierten Ärzten in Deutschland.
+
+Bewerte den folgenden Artikel in 6 Dimensionen. Vergib für jede Dimension einen Score UND eine Begründung in 1–2 Sätzen.
+
+DIMENSIONEN:
+1. Klinische Handlungsrelevanz (0–20): Kann ein Arzt nach dem Lesen konkret etwas anders machen?
+   18–20: Sofortige Handlungsänderung (Rote-Hand-Brief, neue Dosierung, Zulassungsentzug, Kontraindikation, neue Dokumentationspflicht).
+   14–17: Handlungsänderung wahrscheinlich (neue Leitlinie, neue Therapieoption, Vergütungsänderung, große RCT zu Erstlinie).
+   9–13: Beeinflusst Entscheidungen indirekt (Registerdaten, Vergleichsstudien, epidemiologische Trends).
+   4–8: Hintergrundwissen (Phase I/II, Grundlagenforschung, akademische Debatte).
+   0–3: Keine ärztliche Relevanz.
+
+2. Evidenz- & Recherchetiefe (0–20): Wie methodisch solide ist die Grundlage — egal ob Studie oder Journalismus?
+   18–20: Meta-Analyse/Systematic Review PRISMA-konform, große multizentrische RCT, Cochrane Review. Oder: investigativ recherchiert mit ≥4 unabhängigen Quellen und eigener Datenanalyse.
+   14–17: RCT monozentrisch/Surrogat, große Kohorte >10.000. Oder: 2–3 unabhängige Quellen mit Faktengrundlage.
+   9–13: Kleinere Kohorten, retrospektive Analysen. Oder: 1–2 Quellen, korrekt aber ohne eigene Analyse.
+   4–8: Fallberichte, Pilotstudien <50. Oder: Einzelquelle ohne Gegenposition.
+   0–3: Unbelegte Behauptungen, reine Spekulation.
+
+3. Thematische Zugkraft (0–20): Wie stark wollen Ärzte das lesen, teilen und diskutieren?
+   18–20: Maximale Zugkraft (Ärztemangel, Klinikschließungen, Honorarreform, Sicherheitsalarm häufiges Medikament, spaltendes Thema).
+   14–17: Starke Zugkraft (Burnout, Digitalisierung ePA, Bürokratie, kontroverse Therapie häufige Erkrankung).
+   9–13: Moderate Zugkraft (Leitlinien-Update, Kongressbericht, Fortbildung).
+   4–8: Geringe Zugkraft (seltene Erkrankung ohne Medienkontext, Nischenthema <5% Ärzte).
+   0–3: Keine Zugkraft.
+
+4. Neuigkeitswert (0–16): Bringt das genuinely neue Information?
+   14–16: Erstmalig, überraschend oder paradigmenwechselnd (Erstpublikation, unerwartetes Ergebnis, First-in-Class, exklusive Recherche).
+   10–13: Relevantes Update (Phase-III nach Phase-II, Zulassung, neue Leitlinienversion, neuer Blickwinkel).
+   5–9: Bestätigung oder Zusammenfassung (bekannte Praxis bestätigt, Übersichtsartikel).
+   0–4: Nichts Neues (redundante Berichterstattung).
+
+5. Quellenautorität (0–12): Wie vertrauenswürdig ist die Quelle?
+   11–12: NEJM, Lancet, JAMA, BMJ, Nature Medicine, Nature, Science, Cochrane, BfArM, EMA, FDA, RKI, WHO.
+   9–10: Führende Fachjournale (Circulation, JCO, EHJ, Annals), Ärzteblatt Originalbeitrag, offizielle Fachgesellschaften.
+   7–8: Solide Fachjournale IF>5, Ärzte Zeitung eigene Recherche, Pharmazeutische Zeitung, Medscape.
+   5–6: Peer-reviewed IF 2–5, Kongressabstracts großer Kongresse.
+   3–4: Niedrig-IF Journale, Preprints.
+   0–2: Pressemitteilungen, Unternehmens-PR, Blogs.
+
+6. Aufbereitungsqualität (0–12): Wie gut für Ärzte aufbereitet?
+   11–12: Exzellent (Kernbotschaft sofort, klinische Implikationen explizit, NNT/ARR, strukturiert, Praxistipps).
+   8–10: Gut (strukturiertes Abstract, Endpunkte klar, gut lesbar).
+   5–7: Akzeptabel (fachlich korrekt aber sperrig, keine klinische Einordnung).
+   2–4: Mangelhaft (schwer zugänglich, Paywall ohne Abstract).
+   0–1: Nicht verwertbar (kein Inhalt zugänglich).
+
+WICHTIGE REGELN:
+- Wissenschaftliche Studien und journalistische Artikel werden auf DERSELBEN Skala bewertet.
+- Ein investigativer Ärzteblatt-Beitrag KANN denselben Score erreichen wie eine NEJM-Studie.
+- Bewerte die QUALITÄT der Beweisführung, nicht den Studientyp.
+- Quellenautorität ist ein Vertrauenssignal (max 12 Punkte), kein dominanter Faktor.
+- Zugkraft misst Engagement-Potenzial bei Ärzten, nicht klinische Wichtigkeit.
+
+KALIBRIERUNGS-ANKER (A–H):
+A) NEJM Meta-Analyse, neue Erstlinientherapie Diabetes: ~87 (H:19 E:19 Z:15 N:15 Q:12 A:7)
+B) Ärzteblatt investigativ, Krankenhausreform-Folgen für Ärzte: ~84 (H:17 E:16 Z:19 N:12 Q:9 A:11)
+C) Rote-Hand-Brief häufiges Medikament (Ärzte Zeitung): ~81 (H:20 E:11 Z:18 N:16 Q:7 A:9)
+D) Case Report seltene UAW, Nischenjournal: ~31 (H:4 E:5 Z:4 N:8 Q:4 A:6)
+E) Pharma-Pressemitteilung Phase II Onkologie: ~30 (H:3 E:4 Z:7 N:11 Q:1 A:4)
+F) Nature Medicine Grundlagenforschung Alzheimer: ~69 (H:5 E:18 Z:14 N:15 Q:12 A:5)
+G) Ärzteblatt CME Herzinsuffizienz: ~65 (H:14 E:13 Z:11 N:6 Q:9 A:12)
+H) Medscape Burnout-Umfrage Klinikärzte: ~66 (H:8 E:12 Z:18 N:11 Q:7 A:10)"""
+
 
 def _build_scoring_prompt(article: Article) -> str:
-    """Build the user message for LLM scoring."""
+    """Build the v2 user message for LLM scoring.
+
+    Uses template variables from docs/scoring-v2.md:
+    {{source}}, {{journal}}, {{title}}, {{abstract}}, {{date}}, {{doi}}
+    Plus {{FEEDBACK_EXAMPLES}} placeholder.
+    """
+    # Build feedback examples block
+    few_shot_block = ""
+    few_shot = _get_feedback_examples()
+    if few_shot:
+        # few_shot is a list of message dicts — we don't inline them here
+        # (they're injected as separate messages), so leave placeholder empty
+        pass
+
+    prompt = (
+        f"{{{{FEEDBACK_EXAMPLES}}}}\n\n"
+        f"ARTIKEL:\n"
+        f"Quelle: {article.source or ''}\n"
+        f"Journal: {article.journal or ''}\n"
+        f"Titel: {article.title or ''}\n"
+        f"Abstract/Text: {(article.abstract or '')[:2000]}\n"
+        f"Datum: {article.pub_date.isoformat() if article.pub_date else ''}\n"
+        f"DOI: {article.doi or ''}\n\n"
+        f'Antworte AUSSCHLIESSLICH in diesem JSON-Format:\n'
+        f'{{\n'
+        f'  "scores": {{\n'
+        f'    "clinical_action_relevance": {{"score": 0, "reason": ""}},\n'
+        f'    "evidence_depth": {{"score": 0, "reason": ""}},\n'
+        f'    "topic_appeal": {{"score": 0, "reason": ""}},\n'
+        f'    "novelty": {{"score": 0, "reason": ""}},\n'
+        f'    "source_authority": {{"score": 0, "reason": ""}},\n'
+        f'    "presentation_quality": {{"score": 0, "reason": ""}}\n'
+        f'  }},\n'
+        f'  "total_score": 0,\n'
+        f'  "tier": "TOP|RELEVANT|MONITOR",\n'
+        f'  "one_line_summary": "Kernaussage in einem Satz für die Redaktion"\n'
+        f'}}'
+    )
+    return prompt
+
+
+def _build_scoring_prompt_v1(article: Article) -> str:
+    """Build the v1 user message for LLM scoring (backward compat)."""
     parts = [f"Titel: {article.title or ''}"]
     if article.abstract:
         parts.append(f"Abstract: {article.abstract[:1500]}")
@@ -384,8 +729,82 @@ def _build_scoring_prompt(article: Article) -> str:
     return "\n".join(parts)
 
 
+def _parse_llm_score_v1(text: str) -> Optional[dict]:
+    """Parse v1 LLM scoring response (5 dimensions, flat JSON).
+
+    Kept for backward compatibility.  Returns ``None`` on parse failure.
+    """
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[-1]
+    if cleaned.endswith("```"):
+        cleaned = cleaned.rsplit("```", 1)[0]
+    cleaned = cleaned.strip()
+
+    try:
+        data = json.loads(cleaned)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("Could not parse LLM v1 score JSON: %s", text[:120])
+        return None
+
+    dim_keys = [
+        "studientyp", "klinische_relevanz", "neuigkeitswert",
+        "zielgruppen_fit", "quellenqualitaet",
+    ]
+    scores = {}
+    for key in dim_keys:
+        val = data.get(key)
+        if val is None:
+            logger.warning("LLM v1 score missing dimension: %s", key)
+            return None
+        scores[key] = max(0, min(20, float(val)))
+
+    total = round(sum(scores.values()), 1)
+
+    breakdown = {
+        "scorer": "llm",
+        "scoring_version": "v1",
+        "studientyp": scores["studientyp"],
+        "klinische_relevanz": scores["klinische_relevanz"],
+        "neuigkeitswert": scores["neuigkeitswert"],
+        "zielgruppen_fit": scores["zielgruppen_fit"],
+        "quellenqualitaet": scores["quellenqualitaet"],
+        "total": total,
+    }
+
+    for key in dim_keys:
+        begr_key = f"begr_{key}"
+        if begr_key in data and isinstance(data[begr_key], str):
+            breakdown[begr_key] = data[begr_key][:200]
+
+    return breakdown
+
+
+# v2 dimension definitions: field → max score
+_V2_DIMS = {
+    "clinical_action_relevance": 20,
+    "evidence_depth": 20,
+    "topic_appeal": 20,
+    "novelty": 16,
+    "source_authority": 12,
+    "presentation_quality": 12,
+}
+
+
 def _parse_llm_score(text: str) -> Optional[dict]:
-    """Parse LLM scoring response into a breakdown dict.
+    """Parse v2 LLM scoring response (6 dimensions, nested JSON).
+
+    Expected format::
+
+        {
+          "scores": {
+            "clinical_action_relevance": {"score": N, "reason": "..."},
+            ...
+          },
+          "total_score": N,
+          "tier": "TOP|RELEVANT|MONITOR",
+          "one_line_summary": "..."
+        }
 
     Returns ``None`` on parse failure.
     """
@@ -402,36 +821,59 @@ def _parse_llm_score(text: str) -> Optional[dict]:
         logger.warning("Could not parse LLM score JSON: %s", text[:120])
         return None
 
-    # Validate that the 5 dimension keys exist and are numeric
-    dim_keys = [
-        "studientyp", "klinische_relevanz", "neuigkeitswert",
-        "zielgruppen_fit", "quellenqualitaet",
-    ]
-    scores = {}
-    for key in dim_keys:
-        val = data.get(key)
-        if val is None:
-            logger.warning("LLM score missing dimension: %s", key)
-            return None
-        scores[key] = max(0, min(20, float(val)))
+    scores_obj = data.get("scores")
+    if not isinstance(scores_obj, dict):
+        # Maybe it's a v1 response — try that parser
+        logger.debug("No 'scores' key — trying v1 parser")
+        return _parse_llm_score_v1(text)
 
-    total = round(sum(scores.values()), 1)
+    dim_scores = {}
+    dim_reasons = {}
+
+    for dim_key, dim_max in _V2_DIMS.items():
+        dim_data = scores_obj.get(dim_key)
+        if not isinstance(dim_data, dict):
+            logger.warning("v2 score missing or malformed dimension: %s", dim_key)
+            return None
+        raw_score = dim_data.get("score")
+        if raw_score is None:
+            logger.warning("v2 score missing score value for: %s", dim_key)
+            return None
+        # Cap at dimension max
+        dim_scores[dim_key] = max(0, min(dim_max, float(raw_score)))
+        reason = dim_data.get("reason", "")
+        if isinstance(reason, str):
+            dim_reasons[dim_key] = reason[:300]
+
+    # Calculate total from individual scores (don't trust LLM's total)
+    total = round(sum(dim_scores.values()), 1)
+
+    # Derive tier from calculated total
+    if total >= 70:
+        tier = "TOP"
+    elif total >= 45:
+        tier = "RELEVANT"
+    else:
+        tier = "MONITOR"
+
+    one_line_summary = ""
+    if isinstance(data.get("one_line_summary"), str):
+        one_line_summary = data["one_line_summary"][:500]
 
     breakdown = {
         "scorer": "llm",
-        "studientyp": scores["studientyp"],
-        "klinische_relevanz": scores["klinische_relevanz"],
-        "neuigkeitswert": scores["neuigkeitswert"],
-        "zielgruppen_fit": scores["zielgruppen_fit"],
-        "quellenqualitaet": scores["quellenqualitaet"],
+        "scoring_version": "v2",
+        "scores": {
+            dim_key: {
+                "score": dim_scores[dim_key],
+                "reason": dim_reasons.get(dim_key, ""),
+            }
+            for dim_key in _V2_DIMS
+        },
         "total": total,
+        "tier": tier,
+        "one_line_summary": one_line_summary,
     }
-
-    # Add reasoning strings if present
-    for key in dim_keys:
-        begr_key = f"begr_{key}"
-        if begr_key in data and isinstance(data[begr_key], str):
-            breakdown[begr_key] = data[begr_key][:200]
 
     return breakdown
 
@@ -508,11 +950,13 @@ def llm_score_article(article: Article) -> Optional[Tuple[float, dict]]:
 
 
 def score_articles(articles: list[Article]) -> list[Article]:
-    """Score articles — LLM for pre-filtered set, rule-based as fallback.
+    """Score articles using v2 scoring — LLM primary, rule-based v2 fallback.
 
     Uses concurrent threads (max 4) when LLM scoring is enabled to
-    parallelise API calls.  Falls back to the rule-based scorer for
+    parallelise API calls.  Falls back to the v2 rule-based scorer for
     individual articles where the LLM fails.
+
+    All newly scored articles get ``scoring_version = "v2"``.
     """
     global _feedback_cache, _feedback_loaded
     from src.config import get_provider_chain
@@ -525,6 +969,24 @@ def score_articles(articles: list[Article]) -> list[Article]:
     llm_count = 0
     rule_count = 0
 
+    def _apply_score(article: Article, llm_result, use_v2_fallback=True):
+        """Apply LLM result or fallback to article."""
+        nonlocal llm_count, rule_count
+        if llm_result is not None:
+            score, breakdown = llm_result
+            rb_score, _ = compute_relevance_score_v2(article)
+            breakdown["rule_based_score"] = rb_score
+            article.relevance_score = score
+            article.score_breakdown = json.dumps(breakdown)
+            article.scoring_version = "v2"
+            llm_count += 1
+        else:
+            score, breakdown = compute_relevance_score_v2(article)
+            article.relevance_score = score
+            article.score_breakdown = json.dumps(breakdown)
+            article.scoring_version = "v2"
+            rule_count += 1
+
     if use_llm and len(articles) > 2:
         # Warm up feedback cache in main thread before spawning workers
         _get_feedback_examples()
@@ -534,42 +996,19 @@ def score_articles(articles: list[Article]) -> list[Article]:
         llm_results = map_concurrent(llm_score_article, articles, max_workers=4)
 
         for article, llm_result in zip(articles, llm_results):
-            if llm_result is not None:
-                score, breakdown = llm_result
-                rb_score, _ = compute_relevance_score(article)
-                breakdown["rule_based_score"] = rb_score
-                article.relevance_score = score
-                article.score_breakdown = json.dumps(breakdown)
-                llm_count += 1
-            else:
-                score, breakdown = compute_relevance_score(article)
-                article.relevance_score = score
-                article.score_breakdown = json.dumps(breakdown)
-                rule_count += 1
+            _apply_score(article, llm_result)
     else:
         for article in articles:
             llm_result = None
             if use_llm:
                 llm_result = llm_score_article(article)
-
-            if llm_result is not None:
-                score, breakdown = llm_result
-                rb_score, _ = compute_relevance_score(article)
-                breakdown["rule_based_score"] = rb_score
-                article.relevance_score = score
-                article.score_breakdown = json.dumps(breakdown)
-                llm_count += 1
-            else:
-                score, breakdown = compute_relevance_score(article)
-                article.relevance_score = score
-                article.score_breakdown = json.dumps(breakdown)
-                rule_count += 1
+            _apply_score(article, llm_result)
 
     articles.sort(key=lambda a: a.relevance_score, reverse=True)
 
     if use_llm:
-        logger.info("Scoring: %d via LLM, %d via rule-based (concurrent)", llm_count, rule_count)
+        logger.info("Scoring v2: %d via LLM, %d via rule-based (concurrent)", llm_count, rule_count)
     else:
-        logger.info("Scoring: %d articles (rule-based)", rule_count)
+        logger.info("Scoring v2: %d articles (rule-based)", rule_count)
 
     return articles
