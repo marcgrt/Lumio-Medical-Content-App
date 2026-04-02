@@ -199,7 +199,7 @@ def require_login() -> dict:
                         {"uid": user["id"]},
                     ).fetchone()
                     if row:
-                        st.session_state["_user_last_visit"] = row[0][:19]
+                        st.session_state["_user_last_visit"] = str(row[0])[:19]
                     else:
                         # First ever login — show everything as new
                         st.session_state["_user_last_visit"] = "2020-01-01T00:00:00"
@@ -515,7 +515,7 @@ def require_login() -> dict:
                             {"uid": user["id"]},
                         ).fetchone()
                         st.session_state["_user_last_visit"] = (
-                            _lv_row[0][:19] if _lv_row else "2020-01-01T00:00:00"
+                            str(_lv_row[0])[:19] if _lv_row else "2020-01-01T00:00:00"
                         )
                     # Generate persistent session token (7 days)
                     token = _generate_session_token(user["id"])
