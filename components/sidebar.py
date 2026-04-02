@@ -481,17 +481,19 @@ def render_sidebar() -> dict:
                                 st.rerun()
                             _ri += 1
 
-        # --- Watchlists (cached) ---
-        @st.cache_data(ttl=300, show_spinner=False)
-        def _cached_watchlists():
-            return get_active_watchlists()
+        # --- Watchlists (cached, per user) ---
+        _current_uid = st.session_state.get("user_id")
 
         @st.cache_data(ttl=300, show_spinner=False)
-        def _cached_wl_counts():
-            return get_watchlist_counts()
+        def _cached_watchlists(_uid=None):
+            return get_active_watchlists(user_id=_uid)
 
-        _wl_all = _cached_watchlists()
-        _wl_counts = _cached_wl_counts() if _wl_all else {}
+        @st.cache_data(ttl=300, show_spinner=False)
+        def _cached_wl_counts(_uid=None):
+            return get_watchlist_counts(user_id=_uid)
+
+        _wl_all = _cached_watchlists(_current_uid)
+        _wl_counts = _cached_wl_counts(_current_uid) if _wl_all else {}
 
         # Keep expander open after deletion
         _wl_expanded = st.session_state.get("_wl_expanded", False)
@@ -589,6 +591,7 @@ def render_sidebar() -> dict:
                 if wl_submitted and wl_name and wl_keywords:
                     with get_session() as session:
                         session.add(Watchlist(
+                            user_id=st.session_state.get("user_id"),
                             name=wl_name.strip(),
                             keywords=wl_keywords.strip(),
                             specialty_filter=wl_spec if wl_spec != "Alle" else None,
