@@ -878,9 +878,11 @@ def _render_recent_searches():
 
     with get_raw_conn() as conn:
         rows = conn.execute(
-            text("SELECT DISTINCT detail FROM useractivity "
+            text("SELECT detail FROM ("
+                 "SELECT detail, MAX(timestamp) AS last_ts FROM useractivity "
                  "WHERE user_id = :uid AND action = 'search' AND detail IS NOT NULL "
-                 "ORDER BY timestamp DESC LIMIT 8"),
+                 "GROUP BY detail ORDER BY last_ts DESC LIMIT 8"
+                 ") sub"),
             {"uid": user_id},
         ).fetchall()
 
