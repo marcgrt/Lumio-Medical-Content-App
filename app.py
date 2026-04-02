@@ -227,7 +227,11 @@ if "page_view_tracked" not in st.session_state:
     track_activity("page_view", "app_load")
     st.session_state.page_view_tracked = True
 
-# Lazy-load views — only import the module when its tab renders
+# ---------------------------------------------------------------------------
+# Render tabs — Feed always loads, other tabs only on demand
+# ---------------------------------------------------------------------------
+_active_tab = st.query_params.get("tab", "Feed")
+
 with tab_feed:
     try:
         from views.feed import render_feed
@@ -237,12 +241,19 @@ with tab_feed:
         _logging.getLogger(__name__).exception("Feed rendering failed")
         st.error(f"Feed-Rendering fehlgeschlagen: {type(_feed_exc).__name__}: {_feed_exc}")
 
+def _deferred_placeholder(label: str):
+    """Show a lightweight placeholder for tabs not yet visited."""
+    st.markdown(
+        f'<div style="text-align:center;padding:40px 20px;color:var(--c-text-muted)">'
+        f'<div style="font-size:1.2rem;margin-bottom:8px">⏳</div>'
+        f'<div style="font-size:0.85rem">{label} wird geladen...</div></div>',
+        unsafe_allow_html=True,
+    )
+
 with tab_search_insights:
     from views.search import render_search
     from views.insights import render_insights
     render_search(filters)
-
-    # Strong visual separator between Search and Insights
     st.markdown("""
     <div style="margin:48px 0 32px;position:relative;text-align:center">
         <hr style="border:none;border-top:2px solid var(--c-border);margin:0">
@@ -251,38 +262,55 @@ with tab_search_insights:
             color:var(--c-text-muted)">📊 Redaktions-Insights</span>
     </div>
     """, unsafe_allow_html=True)
-
     render_insights(filters)
 
 with tab_saisonal:
-    from views.saisonal import render_saisonal
-    render_saisonal()
+    if _active_tab == "Saisonale Themen":
+        from views.saisonal import render_saisonal
+        render_saisonal()
+    else:
+        _deferred_placeholder("Saisonale Themen")
 
 with tab_kongresse:
-    from views.kongresse import render_kongresse
-    render_kongresse()
+    if _active_tab == "Kongresse":
+        from views.kongresse import render_kongresse
+        render_kongresse()
+    else:
+        _deferred_placeholder("Kongresse")
 
 with tab_cowork:
-    from views.cowork import render_cowork
-    render_cowork()
+    if _active_tab == "Redaktion":
+        from views.cowork import render_cowork
+        render_cowork()
+    else:
+        _deferred_placeholder("Redaktion")
 
 with tab_versand:
-    from views.versand import render_versand
-    render_versand()
+    if _active_tab == "Versand":
+        from views.versand import render_versand
+        render_versand()
+    else:
+        _deferred_placeholder("Versand")
 
 with tab_radar:
-    from views.feed import _render_themen_radar
-    st.markdown('<div class="page-header">Themen-Radar</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="page-sub">Aktuelle Trend-Cluster und ihre Entwicklung</div>',
-        unsafe_allow_html=True,
-    )
-    _render_themen_radar(filters)
+    if _active_tab == "Themen-Radar":
+        from views.feed import _render_themen_radar
+        st.markdown('<div class="page-header">Themen-Radar</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="page-sub">Aktuelle Trend-Cluster und ihre Entwicklung</div>',
+            unsafe_allow_html=True,
+        )
+        _render_themen_radar(filters)
+    else:
+        _deferred_placeholder("Themen-Radar")
 
 # ---------------------------------------------------------------------------
 # Admin-only: Usage Dashboard
 # ---------------------------------------------------------------------------
 if is_admin() and tab_admin is not None:
     with tab_admin:
-        from views.admin_usage import render_admin_usage
-        render_admin_usage()
+        if _active_tab == "Team":
+            from views.admin_usage import render_admin_usage
+            render_admin_usage()
+        else:
+            _deferred_placeholder("Team")

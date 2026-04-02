@@ -217,7 +217,7 @@ def expand_search_query(query: str) -> tuple:
 # ---------------------------------------------------------------------------
 # Data access (cached)
 # ---------------------------------------------------------------------------
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner=False)
 def get_articles(
     specialties: Optional[tuple] = None,
     sources: Optional[tuple] = None,
