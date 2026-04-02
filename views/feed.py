@@ -99,7 +99,7 @@ def render_feed(filters: dict):
 
         # Ungelesene Kommentare / Notifications
         _unread = _kpi_conn.execute(
-            text("SELECT COUNT(*) FROM notification WHERE user_id = :uid AND is_read = 0"),
+            text("SELECT COUNT(*) FROM notification WHERE user_id = :uid AND is_read = false"),
             {"uid": _uid},
         ).fetchone()[0]
 

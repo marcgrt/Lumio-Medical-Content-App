@@ -249,7 +249,7 @@ def get_unread_count(user_id: int) -> int:
     try:
         with get_raw_conn() as conn:
             count = conn.execute(
-                text("SELECT COUNT(*) FROM notification WHERE user_id = :user_id AND is_read = 0"),
+                text("SELECT COUNT(*) FROM notification WHERE user_id = :user_id AND is_read = false"),
                 {"user_id": user_id},
             ).fetchone()[0]
         return count
@@ -342,7 +342,7 @@ def _render_notifications(user_id: int):
         notifs = conn.execute(text("""
             SELECT id, type, message, link_collection_id, created_at
             FROM notification
-            WHERE user_id = :user_id AND is_read = 0
+            WHERE user_id = :user_id AND is_read = false
             ORDER BY created_at DESC
             LIMIT 20
         """), {"user_id": user_id}).fetchall()
@@ -355,8 +355,8 @@ def _render_notifications(user_id: int):
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
         with get_raw_conn() as conn2:
             conn2.execute(
-                text("UPDATE notification SET is_read = 1 "
-                     "WHERE user_id = :user_id AND is_read = 0 "
+                text("UPDATE notification SET is_read = true "
+                     "WHERE user_id = :user_id AND is_read = false "
                      "AND type = 'health_check' "
                      "AND created_at < :cutoff"),
                 {"user_id": user_id, "cutoff": cutoff},
@@ -421,7 +421,7 @@ def _render_notifications(user_id: int):
     if st.button("✓ Alle gelesen", key="mark_read_btn"):
         with get_raw_conn() as conn2:
             conn2.execute(
-                text("UPDATE notification SET is_read = 1 WHERE user_id = :user_id AND is_read = 0"),
+                text("UPDATE notification SET is_read = true WHERE user_id = :user_id AND is_read = false"),
                 {"user_id": user_id},
             )
         st.rerun()
@@ -1027,7 +1027,7 @@ def _render_draft_section(cid: int, name: str, art_count: int, user_id: int):
                             with get_raw_conn() as dconn3:
                                 # Deactivate all, activate new
                                 dconn3.execute(
-                                    text("UPDATE collection_draft SET is_active = 0 WHERE collection_id = :cid"),
+                                    text("UPDATE collection_draft SET is_active = false WHERE collection_id = :cid"),
                                     {"cid": cid},
                                 )
                                 dconn3.execute(
@@ -1059,7 +1059,7 @@ def _render_draft_section(cid: int, name: str, art_count: int, user_id: int):
                         new_ver = (versions[0][1] if versions else 0) + 1
                         with get_raw_conn() as dconn4:
                             dconn4.execute(
-                                text("UPDATE collection_draft SET is_active = 0 WHERE collection_id = :cid"),
+                                text("UPDATE collection_draft SET is_active = false WHERE collection_id = :cid"),
                                 {"cid": cid},
                             )
                             dconn4.execute(

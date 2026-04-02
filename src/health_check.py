@@ -440,7 +440,7 @@ def notify_admin(report: dict):
                 if existing == 0:
                     conn.execute(
                         text("INSERT INTO notification (user_id, type, message, is_read, created_at) "
-                             "VALUES (:uid, 'health_check', :msg, 0, :now)"),
+                             "VALUES (:uid, 'health_check', :msg, false, :now)"),
                         {"uid": admin_id, "msg": message[:500], "now": now},
                     )
         logger.info(f"Admin notification sent: {message[:80]}")
