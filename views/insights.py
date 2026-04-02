@@ -72,19 +72,32 @@ def render_insights(filters: dict):
         """, unsafe_allow_html=True)
         return
 
-    df = pd.DataFrame([{
-        "Fachgebiet": a.specialty or "Unklassifiziert",
-        "Quelle": a.source,
-        "Score": a.relevance_score,
-        "Status": a.status,
-        "Datum": a.pub_date,
-        "Journal": a.journal or "Unbekannt",
-        "Titel": a.title,
-        "URL": a.url or "",
-        "Artikeltyp": a.study_type or "Unbekannt",
-        "Sprache": a.language or "?",
-        "Quellenkategorie": a.source_category,
-    } for a in all_articles])
+    # Expand articles into multiple rows for secondary specialties
+    # so each cross-cutting article counts in ALL relevant specialties
+    # Expand articles: each cross-cutting article counts in ALL relevant specialties
+    _article_rows = []
+    for a in all_articles:
+        _base = {
+            "Quelle": a.source,
+            "Score": a.relevance_score,
+            "Status": a.status,
+            "Datum": a.pub_date,
+            "Journal": a.journal or "Unbekannt",
+            "Titel": a.title,
+            "URL": a.url or "",
+            "Artikeltyp": a.study_type or "Unbekannt",
+            "Sprache": a.language or "?",
+            "Quellenkategorie": a.source_category,
+        }
+        _base["Fachgebiet"] = a.specialty or "Unklassifiziert"
+        _article_rows.append({**_base})
+        if a.secondary_specialties:
+            for _sec in a.secondary_specialties.split(","):
+                _sec = _sec.strip()
+                if _sec and _sec != a.specialty:
+                    _article_rows.append({**_base, "Fachgebiet": _sec})
+
+    df = pd.DataFrame(_article_rows)
     df["Datum"] = pd.to_datetime(df["Datum"], errors="coerce")
 
     total = len(df)
